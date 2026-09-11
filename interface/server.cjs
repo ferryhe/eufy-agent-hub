@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { LocalEufySession } = require('../capabilities/auth/session.cjs');
 const { installRecordingRoutes } = require('../api/legacy-recording-routes.cjs');
+const { installV1Routes } = require('../api/v1-routes.cjs');
 const { errorBody, serviceError } = require('../api/messages.cjs');
 
 function createServer(options = {}) {
@@ -35,7 +36,7 @@ function createServer(options = {}) {
     if (req.headers.origin !== origin || !req.headers['content-type']?.startsWith('application/json')) {
       return reject(403, '请从本地登录页面提交。', 'ui.error.localPage');
     }
-    if (busy) return reject(409, '正在连接，请稍候。', 'ui.error.busy');
+    if (isBusy()) return reject(409, '正在连接，请稍候。', 'ui.error.busy');
     let data;
     try {
       let body = '';
@@ -43,6 +44,8 @@ function createServer(options = {}) {
         body += chunk;
         if (body.length > 16384) return reject(413, '输入过长。', 'ui.error.inputLong');
       }
+      // Another request may acquire the session while this body is arriving.
+      if (isBusy()) return reject(409, '正在连接，请稍候。', 'ui.error.busy');
       data = JSON.parse(body);
       if (route === '/login') {
         if (typeof data.email !== 'string' || !data.email.trim() || typeof data.password !== 'string' || !data.password || typeof data.country !== 'string' || !/^[a-z]{2}$/i.test(data.country.trim())) {
@@ -69,12 +72,19 @@ function createServer(options = {}) {
     }
   });
   const recordingRoutes = installRecordingRoutes(server, session, {
-    isBusy: () => busy, getOrigin, recordings: options.recordings, outputRoot: options.outputRoot,
+    isBusy: () => busy || v1.isBusy(), getOrigin, recordings: options.recordings, outputRoot: options.outputRoot,
   });
-  server.once('close', () => {
+  const v1 = installV1Routes(server, session, {
+    getOrigin, isBusy: () => busy || recordingRoutes.state.busy || session.state.phase === 'busy',
+    exports: options.exports, createRanges: options.createRanges,
+  });
+  const isBusy = () => busy || recordingRoutes.state.busy || v1.isBusy();
+  let shutdown;
+  server.shutdown = () => shutdown ||= v1.shutdown().finally(() => {
     recordingRoutes.recordings.close();
     session.close?.();
   });
+  server.once('close', () => { server.shutdown().catch(error => console.error(error)); });
   server.start = callback => server.listen(port, '127.0.0.1', callback);
   return server;
 }
@@ -84,7 +94,10 @@ if (require.main === module) {
   server.start(() => console.log(`Eufy login ready: http://127.0.0.1:${server.address().port}`));
   // The protocol library may retain UDP handles after closing its station.
   // Only the standalone entry point owns the process lifetime.
-  const stop = () => server.close(() => process.exit(0));
+  const stop = () => server.close(async () => {
+    try { await server.shutdown(); process.exit(0); }
+    catch (error) { console.error(error); process.exit(1); }
+  });
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
 }

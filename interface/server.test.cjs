@@ -19,6 +19,7 @@ test('local HTTP server serves the migrated page on its configured port without 
   assert.equal(server.listening, false);
   t.after(async () => {
     await new Promise(resolve => server.close(resolve));
+    await server.shutdown();
     fs.rmSync(outputRoot, { recursive: true, force: true });
     assert.equal(sessionClosed, true); assert.equal(recordingsClosed, true);
   });
