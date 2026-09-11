@@ -155,7 +155,7 @@ el('verify').addEventListener('submit', event => { event.preventDefault(); submi
 el('reload-devices').addEventListener('click', () => submit('/refresh', {}));
 el('query-recordings').addEventListener('submit', event => {
   event.preventDefault(); recordingAction('/recordings/query', {
-    serial: el('recording-device').value, day: el('recording-day').value, start: el('recording-start').value, end: el('recording-end').value,
+    serial: el('recording-device').value, day: el('recording-day').value, start: el('recording-start').value, end: el('recording-end').value, timezone: 'America/Toronto',
   });
 });
 applyLanguage();

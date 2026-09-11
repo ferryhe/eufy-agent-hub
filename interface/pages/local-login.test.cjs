@@ -27,7 +27,7 @@ async function pageHarness() {
   let pollFailure;
   const fetch = async (url, options) => {
     if (url.startsWith('/locales/')) return response(catalogs[url.includes('zh-CN') ? 'zh-CN' : 'en']);
-    if (options?.method === 'POST') return post(url);
+    if (options?.method === 'POST') return post(url, options);
     if (pollFailure === 'network') throw new TypeError('Temporary status connection reset');
     if (pollFailure === 'http') return response({}, false);
     return response(url === '/status' ? state.auth : state.recordings);
@@ -63,6 +63,19 @@ test('a successful auth poll clears a lost login response instead of masking the
   await page.refresh();
   assert.equal(page.node('login').hidden, true);
   assert.equal(page.node('status').textContent, page.catalogs.en['service.devices.empty'].replace('{country}', 'CA'));
+});
+
+test('the fixed Toronto page sends an explicit timezone independent of server defaults', async () => {
+  const page = await pageHarness();
+  page.node('recording-device').value = 'CAMERA123';
+  page.node('recording-day').value = '2026-08-27';
+  page.node('recording-start').value = '16:30';
+  page.node('recording-end').value = '16:50';
+  let sent;
+  page.setPost((url, options) => { sent = JSON.parse(options.body); return page.response({ok:true}); });
+  await page.node('query-recordings').listeners.submit({preventDefault() {}});
+  assert.equal(sent.timezone,'America/Toronto');
+  assert.equal(sent.start,'16:30');
 });
 
 for (const failure of ['network', 'http']) {
