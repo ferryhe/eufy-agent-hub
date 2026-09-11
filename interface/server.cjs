@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { LocalEufySession } = require('../capabilities/auth/session.cjs');
 const { installRecordingRoutes } = require('../api/legacy-recording-routes.cjs');
+const { errorBody, serviceError } = require('../api/messages.cjs');
 
 function createServer(options = {}) {
   const port = Number(options.port ?? process.env.EUFY_PORT ?? 3187);
@@ -19,33 +20,41 @@ function createServer(options = {}) {
       res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' });
       res.end(type.startsWith('application/json') ? JSON.stringify(body) : body);
     };
-    if (req.headers.host !== new URL(origin).host) return send(403, { error: '请使用本地链接。' });
+    const reject = (status, message, key) => send(status, errorBody(serviceError(message, key)));
+    if (req.headers.host !== new URL(origin).host) return reject(403, '请使用本地链接。', 'ui.error.localLink');
     if (req.method === 'GET' && route === '/') return send(200, fs.readFileSync(path.join(__dirname, 'pages/local-login.html')), 'text/html; charset=utf-8');
+    const scripts = { '/assets/i18n.mjs': 'i18n/i18n.mjs', '/assets/local-login.mjs': 'pages/local-login.mjs' };
+    if (req.method === 'GET' && Object.hasOwn(scripts, route)) return send(200, fs.readFileSync(path.join(__dirname, scripts[route])), 'text/javascript; charset=utf-8');
+    const locale = { '/locales/en.json': 'en', '/locales/zh-CN.json': 'zh-CN' }[route];
+    if (req.method === 'GET' && locale) {
+      const readCatalog = name => JSON.parse(fs.readFileSync(path.join(__dirname, `i18n/${name}.${locale}.json`), 'utf8'));
+      return send(200, { ...readCatalog('ui'), ...readCatalog('service') });
+    }
     if (req.method === 'GET' && route === '/status') return send(200, { ...session.state, busy, version: 'mega-inventory-1' });
     if (req.method !== 'POST' || !['/login', '/verify', '/refresh'].includes(route)) return send(404, {});
     if (req.headers.origin !== origin || !req.headers['content-type']?.startsWith('application/json')) {
-      return send(403, { error: '请从本地登录页面提交。' });
+      return reject(403, '请从本地登录页面提交。', 'ui.error.localPage');
     }
-    if (busy) return send(409, { error: '正在连接，请稍候。' });
+    if (busy) return reject(409, '正在连接，请稍候。', 'ui.error.busy');
     let data;
     try {
       let body = '';
       for await (const chunk of req) {
         body += chunk;
-        if (body.length > 16384) return send(413, { error: '输入过长。' });
+        if (body.length > 16384) return reject(413, '输入过长。', 'ui.error.inputLong');
       }
       data = JSON.parse(body);
       if (route === '/login') {
         if (typeof data.email !== 'string' || !data.email.trim() || typeof data.password !== 'string' || !data.password || typeof data.country !== 'string' || !/^[a-z]{2}$/i.test(data.country.trim())) {
-          return send(400, { error: '请填写邮箱、密码和两位国家代码。' });
+          return reject(400, '请填写邮箱、密码和两位国家代码。', 'ui.error.credentials');
         }
       } else if (route === '/refresh') {
-        if (!session.authenticated) return send(400, { error: '请先完成登录。' });
+        if (!session.authenticated) return reject(400, '请先完成登录。', 'ui.error.loginFirst');
       } else if (!['tfa', 'captcha'].includes(session.state.phase) || typeof data.code !== 'string' || !data.code.trim()) {
-        return send(400, { error: '请先登录，再输入验证码。' });
+        return reject(400, '请先登录，再输入验证码。', 'ui.error.verifyFirst');
       }
     } catch {
-      return send(400, { error: '输入格式有误。' });
+      return reject(400, '输入格式有误。', 'ui.error.inputFormat');
     }
     busy = true;
     send(202, { ok: true });

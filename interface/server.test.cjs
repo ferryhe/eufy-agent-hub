@@ -25,13 +25,25 @@ test('local HTTP server serves the migrated page on its configured port without 
   await new Promise(resolve => server.start(resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   const page = await fetch(origin);
-  assert.equal(page.status, 200); assert.match(await page.text(), /eufy 录像提取/);
+  assert.equal(page.status, 200); assert.match(await page.text(), /data-i18n="ui.title"/);
+  for (const script of ['i18n.mjs', 'local-login.mjs']) {
+    const response = await fetch(origin + '/assets/' + script);
+    assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /javascript/);
+  }
+  const english = await (await fetch(origin + '/locales/en.json')).json();
+  const chinese = await (await fetch(origin + '/locales/zh-CN.json')).json();
+  assert.equal(english['ui.login'], 'Sign in'); assert.equal(chinese['ui.login'], '登录');
+  assert.deepEqual(Object.keys(english).sort(), Object.keys(chinese).sort());
+  assert.equal((await fetch(origin + '/locales/fr.json')).status, 404);
   const state = await fetch(origin + '/status'); assert.equal((await state.json()).phase, 'idle');
   const clips = await fetch(origin + '/recordings/status'); assert.deepEqual((await clips.json()).saved, []);
   const query = await fetch(origin + '/recordings/query', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' });
   assert.equal(query.status, 401);
   const invalidLogin = await fetch(origin + '/login', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' });
   assert.equal(invalidLogin.status, 400);
+  assert.deepEqual(await invalidLogin.json(), {
+    error: '请填写邮箱、密码和两位国家代码。', errorI18n: { key: 'ui.error.credentials', params: {} },
+  });
   const foreignOrigin = await fetch(origin + '/refresh', { method: 'POST', headers: { Origin: 'http://127.0.0.1:1', 'Content-Type': 'application/json' }, body: '{}' });
   assert.equal(foreignOrigin.status, 403);
 });

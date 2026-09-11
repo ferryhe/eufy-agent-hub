@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pipeline } = require('node:stream/promises');
 const { isRecordingCamera, supportsEventRecordings } = require('../devices/recording-support.cjs');
+const { serviceError, messageI18n } = require('../../api/messages.cjs');
 
 function waitFor(emitter, event, action, select, timeoutMs = 45000) {
   return new Promise((resolve, reject) => {
@@ -14,7 +15,7 @@ function waitFor(emitter, event, action, select, timeoutMs = 45000) {
         clean(); resolve(value);
       } catch (error) { clean(); reject(error); }
     };
-    const timer = setTimeout(() => { clean(); reject(new Error(`等待 ${event} 超时`)); }, timeoutMs);
+    const timer = setTimeout(() => { clean(); reject(serviceError(`等待 ${event} 超时`, 'service.recordings.waitTimeout', { event })); }, timeoutMs);
     emitter.on(event, listener);
     Promise.resolve().then(action).catch(error => { clean(); reject(error); });
   });
@@ -24,17 +25,17 @@ class LocalRecordings {
   constructor(session) { this.session = session; }
 
   async connect(serial) {
-    if (!this.session.authenticated) throw new Error('请先登录。');
+    if (!this.session.authenticated) throw serviceError('请先登录。', 'service.auth.loginRequired');
     if (this.camera?.getSerial() === serial && this.station?.isConnected()) return;
     this.close();
     const inventory = await this.session.api.getDevsListDecrypted();
     const raw = inventory.devices.find(device => device.device_sn === serial);
-    if (!raw) throw new Error('未找到设备。');
+    if (!raw) throw serviceError('未找到设备。', 'service.devices.notFound');
     const base = inventory.devices.find(device => device.device_sn === raw.parent_sn);
-    if (!base || base.device_model !== 'T8030') throw new Error('当前录像提取仅接入 HomeBase 3。');
-    if (!supportsEventRecordings(raw, inventory.devices)) throw new Error('此设备不支持当前事件录像提取。');
+    if (!base || base.device_model !== 'T8030') throw serviceError('当前录像提取仅接入 HomeBase 3。', 'service.recordings.homeBase3Only');
+    if (!supportsEventRecordings(raw, inventory.devices)) throw serviceError('此设备不支持当前事件录像提取。', 'service.recordings.unsupportedDevice');
     const ip = base.local_ip || base.params?.find(param => param.param_type === 1176)?.param_value;
-    if (!ip) throw new Error('HomeBase 未提供局域网地址。');
+    if (!ip) throw serviceError('HomeBase 未提供局域网地址。', 'service.recordings.missingLanAddress');
     const cameras = inventory.devices.filter(device => device.parent_sn === base.device_sn && isRecordingCamera(device))
       .map(device => ({ ...device, station_sn: base.device_sn }));
     const provider = {
@@ -42,7 +43,7 @@ class LocalRecordings {
       getDevices: () => Object.fromEntries(cameras.map(device => [device.device_sn, device])),
       refreshStationData: async () => {},
       // Local discovery and the library's LAN command encryption do not need legacy cloud keys.
-      request: async () => { throw new Error('此连接只使用局域网。'); },
+      request: async () => { throw serviceError('此连接只使用局域网。', 'service.recordings.lanOnly'); },
       getCipher: async () => undefined,
       getVoices: async () => ({}),
     };
@@ -57,7 +58,7 @@ class LocalRecordings {
     this.station.on('command result', (_station, result) => {
       if (result.return_code !== 0) this.status.errors.push({command:result.command_type,code:result.return_code});
     });
-    this.station.on('connection error', () => this.status.errors.push({message:'HomeBase 连接失败'}));
+    this.station.on('connection error', () => this.status.errors.push({message:'HomeBase 连接失败', messageI18n: messageI18n('service.recordings.connectionFailed')}));
     try {
       await waitFor(this.station, 'connect', () => this.station.connect(), () => true);
       this.status.connected = true;
@@ -66,7 +67,7 @@ class LocalRecordings {
 
   async listDay(serial, day) {
     this.records = [];
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new Error('日期格式错误。');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw serviceError('日期格式错误。', 'service.recordings.invalidDate');
     await this.connect(serial);
     const start = new Date(`${day}T12:00:00`);
     const end = new Date(start); end.setDate(end.getDate() + 1);
@@ -74,16 +75,16 @@ class LocalRecordings {
     for (const limit of [1000, 2000, 10000]) {
       const records = await waitFor(this.station, 'database query by date',
         () => this.station.databaseQueryByDate([serial], start, end, 0, 0, 0, limit),
-        (_station, code, rows) => { if (code !== 0) throw new Error(`录像查询失败：${code}`); return rows; });
+        (_station, code, rows) => { if (code !== 0) throw serviceError(`录像查询失败：${code}`, 'service.recordings.queryFailed', { code }); return rows; });
       if (records.length < limit && records.length !== previousCount) {
         this.records = records.filter(record => record.device_sn === serial && record.station_sn === this.station.getSerial());
         return this.records;
       }
       if (records.length === 0) { this.records = []; return []; }
-      if (records.length === previousCount) throw new Error('HomeBase 限制了查询条数，无法确认列表完整。');
+      if (records.length === previousCount) throw serviceError('HomeBase 限制了查询条数，无法确认列表完整。', 'service.recordings.queryCapped');
       previousCount = records.length;
     }
-    throw new Error('录像达到查询上限，无法确认列表完整。');
+    throw serviceError('录像达到查询上限，无法确认列表完整。', 'service.recordings.queryLimitReached');
   }
 
   close() {
@@ -96,8 +97,8 @@ class LocalRecordings {
 
   async download(recordId, outputDir) {
     const record = this.records?.find(record => record.record_id === recordId);
-    if (!record || record.device_sn !== this.camera?.getSerial()) throw new Error('请先查询该设备的录像。');
-    if (!this.station.isConnected()) throw new Error('HomeBase 连接已断开。');
+    if (!record || record.device_sn !== this.camera?.getSerial()) throw serviceError('请先查询该设备的录像。', 'service.recordings.queryDeviceFirst');
+    if (!this.station.isConnected()) throw serviceError('HomeBase 连接已断开。', 'service.recordings.disconnected');
     fs.mkdirSync(outputDir, { recursive: true });
     const prefix = path.join(outputDir, String(record.record_id));
     fs.rmSync(prefix + '.json', { force: true });
@@ -122,7 +123,7 @@ class LocalRecordings {
         try {
           await pipes;
           if (settled) return;
-          if (!fs.statSync(prefix + '.video').size) throw new Error('录像下载为空。');
+          if (!fs.statSync(prefix + '.video').size) throw serviceError('录像下载为空。', 'service.recordings.emptyDownload');
           fs.writeFileSync(prefix + '.json', JSON.stringify({record:{...record,start_time:record.start_time.toISOString(),end_time:record.end_time.toISOString()},metadata,complete:true},null,2));
           settled = true; clean();
           resolve({prefix,metadata,complete:true,bytes:fs.statSync(prefix + '.video').size});
@@ -142,9 +143,9 @@ class LocalRecordings {
       const finished = (_s, channel) => { if (channel === this.camera.getChannel()) { ended = true; finish(); } };
       const complete = (_s, channel) => { if (channel === this.camera.getChannel()) { confirmed = true; finish(); } };
       const command = (_s, result) => {
-        if (result.channel === this.camera.getChannel() && result.command_type === CommandType.CMD_DOWNLOAD_VIDEO && result.return_code !== 0) fail(new Error(`录像下载被拒绝：${result.return_code}`));
+        if (result.channel === this.camera.getChannel() && result.command_type === CommandType.CMD_DOWNLOAD_VIDEO && result.return_code !== 0) fail(serviceError(`录像下载被拒绝：${result.return_code}`, 'service.recordings.downloadRejected', { code: result.return_code }));
       };
-      const timer = setTimeout(() => fail(new Error('录像下载超时，未标记为成功。')), 90000);
+      const timer = setTimeout(() => fail(serviceError('录像下载超时，未标记为成功。', 'service.recordings.downloadTimeout')), 90000);
       this.station.on('download start', started);
       this.station.on('download finish', finished);
       this.station.on('download complete', complete);

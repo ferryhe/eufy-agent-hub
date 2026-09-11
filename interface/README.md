@@ -23,5 +23,8 @@ This is the migrated fixed page, not the new Agent interface. Experimental conti
 | `components/` | Planned | Shared cards, timelines, and players |
 | `agent/` | Planned | Conversation entry, sidebar, and tool invocation status |
 | `workspace/` | Planned | Dynamic result composition, pinned results, and layout restoration |
+| `i18n/` | Implemented | Shared English/Chinese catalogs, automatic browser-language matching, and manual selection |
+
+The page defaults to the browser's preferred language, with English fallback. Use the language selector for English or Simplified Chinese; the choice is remembered locally. Interface language changes date/number presentation, while recording times remain explicitly in `America/Toronto`. All future interface modes should reuse the [localization contract](i18n/README.md).
 
 See the [API documentation](../api/README.md) for the current request protocol.

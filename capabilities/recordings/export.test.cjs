@@ -14,5 +14,10 @@ test('missing configured FFmpeg produces an actionable error', async t => {
     fs.rmSync(directory, { recursive: true, force: true });
   });
   process.env.EUFY_FFMPEG = path.join(directory, 'missing-ffmpeg');
-  await assert.rejects(runFfmpeg(['-version']), /EUFY_FFMPEG.*PATH/);
+  await assert.rejects(runFfmpeg(['-version']), error => {
+    assert.match(error.message, /EUFY_FFMPEG.*PATH/);
+    assert.equal(error.i18n.key, 'service.recordings.ffmpegMissing');
+    assert.equal(error.cause.code, 'ENOENT');
+    return true;
+  });
 });
