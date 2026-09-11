@@ -111,7 +111,15 @@ class JobService {
     const snapshot = copy(job);
     const temporary = `${snapshot.metadataPath}.tmp`;
     fs.writeFileSync(temporary, `${JSON.stringify(snapshot, null, 2)}\n`, { flush: true });
-    fs.renameSync(temporary, snapshot.metadataPath);
+    // Windows file readers can briefly deny replacement. Keep the old snapshot
+    // intact; retry only this atomic step, never delete the destination first.
+    for (let attempt = 0; ; attempt++) {
+      try { fs.renameSync(temporary, snapshot.metadataPath); break; }
+      catch (error) {
+        if (process.platform !== 'win32' || !['EPERM', 'EACCES'].includes(error.code) || attempt === 5) throw error;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, (attempt + 1) * 10);
+      }
+    }
     this.#jobs.set(snapshot.jobId, snapshot);
   }
 

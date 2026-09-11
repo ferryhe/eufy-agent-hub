@@ -7,8 +7,9 @@ Callers provide an authenticated session; these modules do not store passwords o
 |---|---|---|
 | `events.cjs` | Event date index, device filtering, confirmed download completion | Validated in the source project and migrated; currently limited to HomeBase 3 on the same LAN |
 | `export.cjs` | Export confirmed raw downloads to MP4 and verify by decoding the entire file | Validated in the source project and migrated; requires FFmpeg |
-| `continuous.cjs` | Query continuous ranges with 6000, play history with 6001, and save timestamped raw frames | Experimental; only a short clip has been validated on a real device |
-| `mux.py` | Generate MPEG-TS using individual frame timestamps | Experimental; requires Python and PyAV, and is not integrated with background jobs |
+| `continuous.cjs` | Query continuous ranges with 6000, play history with 6001, and save timestamped raw frames | Real 20-minute T8030/T8600 evidence assessed as partial; see continuous completeness rules |
+| `mux.py` | Generate MPEG-TS using individual frame timestamps | Requires Python/PyAV; continuous jobs can preserve salvageable partial captures |
+| `continuous-export.cjs` | Resident capture → mux → MP4 → full decode/completeness job | Offline and retained real-media integration tested; fresh hardware acceptance requires its recorded evidence |
 
 ## Event recordings
 
@@ -48,6 +49,9 @@ for defaults, DST rejection, device-calendar bounds and unknown actual coverage.
 
 Commands 6000/6001 have been independently called and used to obtain a short clip. This capability no longer relies on the earlier 1025/1026 guesses.
 See [CONTINUOUS_PLAYBACK.md](CONTINUOUS_PLAYBACK.md) for commands, usage, and limitations.
-Long recordings, interrupted connections, time gaps, automatic conversion, and task recovery have not completed acceptance validation. See the [issue drafts](../../docs/issues/recordings.md).
+The 20-minute hardware capture in Issue #6 has real gaps and remains partial. Continuous jobs automate conversion and validation without changing that result. Automatic recovery after process restart remains Phase B of Issue #1; unfinished jobs are preserved and never replayed silently.
 
 Tests: run `node --test capabilities/recordings/*.test.cjs` from the repository root after building the protocol adapter dependency.
+## Continuous export jobs
+
+The resident `ContinuousExportService` now connects continuous capture, timestamp-preserving mux, MP4 conversion and complete decode to persistent jobs. See [the service contract and hardware runbook](../../docs/continuous-export.md) for submission, runtime configuration, partial results, cancellation and restart boundaries. Existing event export remains a separate path.

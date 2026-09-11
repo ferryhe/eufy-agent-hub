@@ -23,6 +23,44 @@ function service(t, worker) {
 }
 const request = (requestId, homeBaseId = 'home-a') => ({ requestId, homeBaseId, input: { range: [1, 2] } });
 
+test('Windows transient metadata replacement denial retries without losing the old durable snapshot', { skip: process.platform !== 'win32' }, async t => {
+  const jobs = service(t, complete);
+  const queued = jobs.submit(request('replace'));
+  const rename = fs.renameSync;
+  let attempts = 0;
+  fs.renameSync = (source, destination) => {
+    if (destination === queued.metadataPath && attempts++ < 2) {
+      assert.equal(JSON.parse(fs.readFileSync(destination)).state, 'queued');
+      throw Object.assign(new Error('temporary Windows sharing denial'), { code: attempts === 1 ? 'EPERM' : 'EACCES' });
+    }
+    return rename(source, destination);
+  };
+  try { assert.equal(jobs.cancelQueued(queued.jobId).state, 'cancelled'); }
+  finally { fs.renameSync = rename; }
+  assert.equal(attempts, 3);
+  assert.equal(JSON.parse(fs.readFileSync(queued.metadataPath)).state, 'cancelled');
+  await jobs.whenIdle();
+});
+
+test('metadata replacement retry is bounded and other errors fail immediately while preserving the snapshot', async t => {
+  for (const code of ['EPERM', 'EIO']) {
+    const jobs = service(t, complete);
+    const queued = jobs.submit(request('replace'));
+    const rename = fs.renameSync;
+    let attempts = 0;
+    fs.renameSync = (_source, destination) => {
+      if (destination === queued.metadataPath) { attempts++; throw Object.assign(new Error('persistent failure'), { code }); }
+      return rename(_source, destination);
+    };
+    try { assert.throws(() => jobs.cancelQueued(queued.jobId), /persistent failure/); }
+    finally { fs.renameSync = rename; }
+    assert.equal(attempts, code === 'EPERM' && process.platform === 'win32' ? 6 : 1);
+    assert.equal(JSON.parse(fs.readFileSync(queued.metadataPath)).state, 'queued');
+    assert.equal(jobs.get(queued.jobId).state, 'queued');
+    await jobs.whenIdle();
+  }
+});
+
 test('stable identity, independent snapshots, persistent reopen, and no duplicate execution', async t => {
   let calls = 0;
   const outputRoot = root(t);
