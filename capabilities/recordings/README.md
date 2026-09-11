@@ -38,7 +38,11 @@ The HB3 download branch sends an account-bound `CMD_SET_PAYLOAD` request with th
 
 FFmpeg uses the executable specified by `EUFY_FFMPEG`, falling back to `ffmpeg` on `PATH`.
 If FFmpeg is missing, the module returns an installation/configuration hint; it does not depend on the old repository's private runtime.
-Export metadata still uses `America/Toronto`; general time zone support is tracked separately.
+For explicit caller timezones, normalize a window with `time-window.cjs`, query
+with `service.listWindow(serial, window)`, and pass the window as the third
+argument to `service.download`. Export preserves this context in MP4 metadata
+and a JSON sidecar. See the [recording time-window contract](../../docs/recording-time-window.md)
+for defaults, DST rejection, device-calendar bounds and unknown actual coverage.
 
 ## Continuous recordings
 

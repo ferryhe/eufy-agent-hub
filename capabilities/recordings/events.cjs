@@ -4,6 +4,7 @@ const path = require('node:path');
 const { pipeline } = require('node:stream/promises');
 const { isRecordingCamera, supportsEventRecordings } = require('../devices/recording-support.cjs');
 const { serviceError, messageI18n } = require('../../api/messages.cjs');
+const { validateDay } = require('./time-window.cjs');
 
 function waitFor(emitter, event, action, select, timeoutMs = 45000) {
   return new Promise((resolve, reject) => {
@@ -65,12 +66,21 @@ class LocalRecordings {
     } catch (error) { this.close(); throw error; }
   }
 
-  async listDay(serial, day) {
+  async listWindow(serial, window) {
+    // The adapter formats local calendar getters, and parses device index rows in
+    // this same process timezone. Convert instants to that calendar, not the caller's.
+    const start = new Date(window.normalized.start), end = new Date(Date.parse(window.normalized.end) - 1);
+    const day = date => `${String(date.getFullYear()).padStart(4, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    const rows = await this.listDay(serial, day(start), day(end));
+    return rows.filter(record => record.start_time < Date.parse(window.normalized.end) && record.end_time > start);
+  }
+
+  async listDay(serial, day, lastDay = day) {
     this.records = [];
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw serviceError('日期格式错误。', 'service.recordings.invalidDate');
+    validateDay(day); validateDay(lastDay);
     await this.connect(serial);
     const start = new Date(`${day}T12:00:00`);
-    const end = new Date(start); end.setDate(end.getDate() + 1);
+    const end = new Date(`${lastDay}T12:00:00`); end.setDate(end.getDate() + 1);
     let previousCount = 0;
     for (const limit of [1000, 2000, 10000]) {
       const records = await waitFor(this.station, 'database query by date',
@@ -95,7 +105,7 @@ class LocalRecordings {
     if (this.status) this.status.connected = false;
   }
 
-  async download(recordId, outputDir) {
+  async download(recordId, outputDir, window = null) {
     const record = this.records?.find(record => record.record_id === recordId);
     if (!record || record.device_sn !== this.camera?.getSerial()) throw serviceError('请先查询该设备的录像。', 'service.recordings.queryDeviceFirst');
     if (!this.station.isConnected()) throw serviceError('HomeBase 连接已断开。', 'service.recordings.disconnected');
@@ -124,7 +134,7 @@ class LocalRecordings {
           await pipes;
           if (settled) return;
           if (!fs.statSync(prefix + '.video').size) throw serviceError('录像下载为空。', 'service.recordings.emptyDownload');
-          fs.writeFileSync(prefix + '.json', JSON.stringify({record:{...record,start_time:record.start_time.toISOString(),end_time:record.end_time.toISOString()},metadata,complete:true},null,2));
+          fs.writeFileSync(prefix + '.json', JSON.stringify({record:{...record,start_time:record.start_time.toISOString(),end_time:record.end_time.toISOString()},metadata,complete:true,window,coverage:null},null,2));
           settled = true; clean();
           resolve({prefix,metadata,complete:true,bytes:fs.statSync(prefix + '.video').size});
         } catch(error) { fail(error); }

@@ -27,7 +27,7 @@ test('service catalogs cover emitted keys with matching parameter placeholders',
     const parameters = value => [...value.matchAll(/\{(\w+)\}/g)].map(match => match[1]).sort();
     assert.deepEqual(parameters(en[key]), parameters(zh[key]), key);
   }
-  for (const filename of ['capabilities/auth/session.cjs', 'capabilities/recordings/events.cjs', 'capabilities/recordings/export.cjs', 'api/legacy-recording-routes.cjs']) {
+  for (const filename of ['capabilities/auth/session.cjs', 'capabilities/recordings/events.cjs', 'capabilities/recordings/export.cjs', 'capabilities/recordings/time-window.cjs', 'api/legacy-recording-routes.cjs']) {
     const source = fs.readFileSync(path.join(root, filename), 'utf8');
     for (const match of source.matchAll(/['"](service\.[\w.]+)['"]/g)) assert.ok(en[match[1]], match[1]);
   }
@@ -36,7 +36,7 @@ test('service catalogs cover emitted keys with matching parameter placeholders',
 test('recording HTTP errors and async statuses retain legacy fields and expose localization metadata', async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'eufy-message-http-'));
   const session = { authenticated: false, state: { phase: 'idle' } };
-  const recordings = { close() {}, async listDay() { return []; } };
+  const recordings = { close() {}, async listWindow() { return []; } };
   const server = http.createServer((_req, res) => res.end('{}'));
   const installed = installRecordingRoutes(server, session, { recordings, outputRoot: directory });
   server.listen(0, '127.0.0.1');
@@ -59,10 +59,10 @@ test('recording HTTP errors and async statuses retain legacy fields and expose l
   assert.equal((await post(query)).status, 202);
   assert.equal(installed.state.message, '找到 0 段事件录像。此列表不代表完整连续录像。');
   assert.deepEqual(installed.state.messageI18n, messageI18n('service.recordings.found', { count: 0 }));
-  recordings.listDay = async () => { throw serviceError('录像查询失败：9', 'service.recordings.queryFailed', { code: 9 }); };
+  recordings.listWindow = async () => { throw serviceError('录像查询失败：9', 'service.recordings.queryFailed', { code: 9 }); };
   assert.equal((await post(query)).status, 202);
   assert.deepEqual(installed.state.messageI18n, messageI18n('service.recordings.queryFailed', { code: 9 }));
-  recordings.listDay = async () => { throw new Error('unrecognized upstream failure'); };
+  recordings.listWindow = async () => { throw new Error('unrecognized upstream failure'); };
   assert.equal((await post(query)).status, 202);
   assert.equal(installed.state.message, 'unrecognized upstream failure');
   assert.equal(Object.hasOwn(installed.state, 'messageI18n'), false);

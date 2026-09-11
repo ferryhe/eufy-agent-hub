@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { serviceError } = require('../../api/messages.cjs');
+const { resolveTimezone, LEGACY_TIMEZONE } = require('./time-window.cjs');
 
 function ffmpegPath() {
   if (process.env.EUFY_FFMPEG) return process.env.EUFY_FFMPEG;
@@ -24,6 +25,8 @@ function runFfmpeg(args) {
 async function exportRecording(prefix, destination) {
   const info = JSON.parse(fs.readFileSync(prefix + '.json', 'utf8'));
   if (!info.complete) throw serviceError('下载未确认完成。', 'service.recordings.downloadUnconfirmed');
+  // Persisted context wins over today's configuration; old raw files were Toronto.
+  const timezone = resolveTimezone(info.window?.normalized.timezone ?? info.timezone ?? LEGACY_TIMEZONE);
   const videoFormat = info.metadata.videoCodec === 1 ? 'hevc' : 'h264';
   const input = ['-r', String(info.metadata.videoFPS), '-f', videoFormat, '-i', prefix + '.video'];
   const hasAudio = fs.statSync(prefix + '.audio').size > 0;
@@ -31,11 +34,14 @@ async function exportRecording(prefix, destination) {
   fs.mkdirSync(path.dirname(destination), {recursive:true});
   await runFfmpeg(['-y', ...input, '-map', '0:v:0', ...(hasAudio ? ['-map', '1:a:0'] : []),
     '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p',
-    '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', destination]);
+    '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-c:a', 'aac', '-b:a', '128k',
+    '-metadata', `recording_timezone=${timezone}`, '-movflags', '+faststart+use_metadata_tags', destination]);
   // Decode every frame; an existing file alone is not a successful export.
   await runFfmpeg(['-v','error','-xerror','-i',destination,'-f','null','-']);
-  return { file: destination, bytes: fs.statSync(destination).size, start: info.record.start_time,
-    end: info.record.end_time, timezone: 'America/Toronto', recordId: info.record.record_id };
+  const clip = { file: destination, bytes: fs.statSync(destination).size, start: info.record.start_time,
+    end: info.record.end_time, timezone, recordId: info.record.record_id, window: info.window ?? null, coverage: null };
+  fs.writeFileSync(destination + '.json', JSON.stringify(clip, null, 2));
+  return clip;
 }
 
 module.exports = { exportRecording, runFfmpeg };
