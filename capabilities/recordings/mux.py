@@ -8,13 +8,15 @@ from pathlib import Path
 import av
 
 
-def mux(directory):
+def mux(directory, allow_partial=False):
     directory = Path(directory)
     info = json.loads((directory / 'frames.json').read_text())
-    if not info['reachedEnd']:
+    if not info['reachedEnd'] and not allow_partial:
         raise ValueError('Capture did not reach the requested end time')
     frames = info['frames']
     video_frames = [f for f in frames if f['kind'] == 'video']
+    if not video_frames or not video_frames[0]['keyFrame']:
+        raise ValueError('No initial video keyframe available for mux')
     codec = 'hevc' if video_frames[0]['streamType'] == 2 else 'h264'
     base = info['begin'] * 1000
     destination = directory / 'timed.ts'
@@ -44,4 +46,4 @@ def mux(directory):
 
 
 if __name__ == '__main__':
-    mux(sys.argv[1])
+    mux(sys.argv[1], allow_partial='--allow-partial' in sys.argv[2:])
