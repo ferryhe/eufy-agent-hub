@@ -9,7 +9,9 @@ const cached = getDevices(session);
 const refreshed = await refreshDevices(session);
 ```
 
-Both methods return `{ devices, diagnostics, message }`. Devices contain only `serial`, `name`, and `model`; entries are deduplicated by serial number, and unknown models are retained. Results are copies, so changing a returned list does not change the session.
+Both methods return `{ devices, diagnostics, message }`. Devices contain `serial`, `name`, `model`, and `capabilities.eventRecordings`; entries are deduplicated by serial number, and unknown models are retained. Results are copies, so changing a returned list does not change the session.
+
+The recording selector only offers entries with `capabilities.eventRecordings === true`. This requires a camera device type recognized by the protocol library, a declared download command, and a T8030 parent in the inventory. The recording backend repeats the same check against fresh inventory before constructing a camera or connecting. Unknown or missing device types remain visible in discovery but cannot be selected for recording extraction. This eligibility flag is not a guarantee of hardware acceptance for every model or firmware.
 
 `getDevices` returns cached data without making a request. `refreshDevices` requires a logged-in session; if discovery fails, it returns the previous list and failure diagnostics. Interfaces and agents must check `diagnostics` rather than treating cached data as a successful refresh.
 

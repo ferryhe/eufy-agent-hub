@@ -34,6 +34,8 @@ Callers choose the output directory; the CLI/API should use a directory beneath 
 Raw video, audio, and metadata are retained. A download is recorded as successful only after the device sends its completion notification and file writes finish.
 Exports must also pass a full decoding check. Event downloads currently time out after 90 seconds. An event list is not a continuous playback timeline.
 
+The HB3 download branch sends an account-bound `CMD_SET_PAYLOAD` request with the camera channel, recording path, and download RSA public key. Its former unsupported TODO was stale; a device can still reject a request with `-104` (invalid account), which is returned as a failed download rather than recorded as success. Offline tests exercise that branch and rejection handling. Prior source-project acceptance is limited to the documented CA/LAN setup, not every HB3 firmware.
+
 FFmpeg uses the executable specified by `EUFY_FFMPEG`, falling back to `ffmpeg` on `PATH`.
 If FFmpeg is missing, the module returns an installation/configuration hint; it does not depend on the old repository's private runtime.
 Export metadata still uses `America/Toronto`; general time zone support is tracked separately.

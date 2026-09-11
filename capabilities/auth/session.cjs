@@ -1,4 +1,5 @@
 const { MegaHTTPApi, ResponseErrorCode: Code } = require('../../adapters/eufy');
+const { supportsEventRecordings } = require('../devices/recording-support.cjs');
 
 class LocalEufySession {
   constructor(createApi = options => new MegaHTTPApi(options)) {
@@ -78,6 +79,7 @@ class LocalEufySession {
           serial: raw.device_sn,
           name: typeof raw.device_name === 'string' && raw.device_name ? raw.device_name : '未命名设备',
           model: typeof raw.device_model === 'string' ? raw.device_model : '未知型号',
+          capabilities: { eventRecordings: supportsEventRecordings(raw, inventory.devices) },
         });
       }
       this.state.devices = [...devices.values()];

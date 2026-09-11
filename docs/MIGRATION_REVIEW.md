@@ -24,6 +24,11 @@ Review was limited to this capability migration, independent operation, document
 
 Both findings were resolved. Independent review found no remaining migration blockers.
 
+## PR #15 inline review follow-up
+
+- The claim that HB3 downloads unconditionally return `-104` was based on a stale TODO. The branch sends a real account-bound payload; existing source-workspace artifacts include confirmed downloads. The comment is corrected, and regression tests check the HB3 wire fields and invalid-account rejection without a new hardware operation.
+- The camera selector previously excluded only T8030, allowing sensors and locks to be selected. Discovery now exposes recording eligibility based on camera type, declared download command, and HB3 association; the page filters by it and the backend independently enforces it before camera construction. Unknown devices remain in the general inventory.
+
 ## Acceptance boundaries
 
 This migration did not sign into or operate the user's devices, complete a new continuous 20-minute hardware acceptance test, or implement CLI, v1 API, persistent jobs, or an agent.

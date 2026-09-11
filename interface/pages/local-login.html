@@ -57,12 +57,12 @@
       if (deviceKey !== devicesKey) {
         deviceKey = devicesKey;
         const selected = el('recording-device').value;
-        el('recording-device').replaceChildren(...s.devices.filter(d => d.model !== 'T8030').map(d => {
+        el('recording-device').replaceChildren(...s.devices.filter(d => d.capabilities?.eventRecordings === true).map(d => {
           const option = document.createElement('option'); option.value = d.serial; option.textContent = d.name + ' · ' + d.model;
           option.selected = selected ? d.serial === selected : d.name === 'Drive Way'; return option;
         }));
       }
-      el('query-submit').disabled = s.busy || recordingBusy || s.phase !== 'connected';
+      el('query-submit').disabled = s.busy || recordingBusy || s.phase !== 'connected' || !el('recording-device').value;
       el('status').textContent = s.message;
       el('submit').disabled = s.busy;
       el('verify-submit').disabled = s.busy;

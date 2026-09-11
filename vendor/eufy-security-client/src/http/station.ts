@@ -7520,7 +7520,9 @@ export class Station extends TypedEmitter<StationEvents> {
       cipherID: cipher_id,
     });
     if (this.getDeviceType() === DeviceType.HB3) {
-      //TODO: Implement HB3 Support! Actually doesn't work and returns return_code -104 (ERROR_INVALID_ACCOUNT). It could be that we need the new encrypted p2p protocol to make this work...
+      // HB3 uses an account-bound payload and the session's download RSA key.
+      // The device can reject the request (e.g. -104 for an invalid account);
+      // this is a protocol response, not an unconditional unsupported result.
       const rsa_key = this.p2pSession.getDownloadRSAPrivateKey();
       this.p2pSession.sendCommandWithStringPayload(
         {

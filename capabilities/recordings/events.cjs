@@ -2,6 +2,7 @@ const { Station, Camera, P2PConnectionType, CommandType } = require('../../adapt
 const fs = require('node:fs');
 const path = require('node:path');
 const { pipeline } = require('node:stream/promises');
+const { isRecordingCamera, supportsEventRecordings } = require('../devices/recording-support.cjs');
 
 function waitFor(emitter, event, action, select, timeoutMs = 45000) {
   return new Promise((resolve, reject) => {
@@ -31,9 +32,10 @@ class LocalRecordings {
     if (!raw) throw new Error('未找到设备。');
     const base = inventory.devices.find(device => device.device_sn === raw.parent_sn);
     if (!base || base.device_model !== 'T8030') throw new Error('当前录像提取仅接入 HomeBase 3。');
+    if (!supportsEventRecordings(raw, inventory.devices)) throw new Error('此设备不支持当前事件录像提取。');
     const ip = base.local_ip || base.params?.find(param => param.param_type === 1176)?.param_value;
     if (!ip) throw new Error('HomeBase 未提供局域网地址。');
-    const cameras = inventory.devices.filter(device => device.parent_sn === base.device_sn)
+    const cameras = inventory.devices.filter(device => device.parent_sn === base.device_sn && isRecordingCamera(device))
       .map(device => ({ ...device, station_sn: base.device_sn }));
     const provider = {
       isConnected: () => this.session.authenticated,

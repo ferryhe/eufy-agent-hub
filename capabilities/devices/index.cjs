@@ -1,6 +1,8 @@
 function getDevices(session) {
   return {
-    devices: session.state.devices.map(device => ({ ...device })),
+    devices: session.state.devices.map(device => ({ ...device,
+      ...(device.capabilities ? { capabilities: { ...device.capabilities } } : {}),
+    })),
     diagnostics: [...session.state.diagnostics],
     message: session.state.message,
   };
