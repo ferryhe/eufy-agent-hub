@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>eufy 录像提取</title>
+<style>
+  *{box-sizing:border-box}body{margin:0;background:#f3f6fa;color:#162636;font:16px/1.65 system-ui,sans-serif}main{max-width:520px;margin:7vh auto;padding:32px;background:white;border-radius:20px;box-shadow:0 12px 50px #14283c12}h1{margin:0;font-size:30px}p{color:#546575}label{display:block;margin:18px 0 5px}input{width:100%;padding:12px;border:1px solid #b8c5d1;border-radius:9px;font:inherit}button{width:100%;padding:13px;margin-top:22px;border:0;border-radius:9px;background:#007dbb;color:white;font:inherit;cursor:pointer}button:disabled{opacity:.5;cursor:wait}#status{padding:13px;background:#eef5fc;border-radius:9px;margin-top:22px;overflow-wrap:anywhere}small{display:block;color:#657482;margin-top:16px}#captcha{display:block;max-width:100%;margin-top:15px}[hidden]{display:none!important}li{margin:8px 0} @media(max-width:560px){main{margin:16px;padding:24px}}
+</style>
+<style>
+  main{max-width:900px}select{width:100%;padding:12px;border:1px solid #b8c5d1;border-radius:9px;font:inherit}.times{display:flex;gap:16px}.times>div{flex:1}section{border-top:1px solid #dce4ec;margin-top:28px;padding-top:24px}h2{margin:0;font-size:23px}.clip{padding:18px;background:#f3f6fa;border-radius:12px;margin:16px 0}.clip video{display:block;width:100%;max-height:420px;margin:12px 0;background:#111;border-radius:8px}a{color:#0077ab}#recording-message{padding:14px;background:#eef5fc;border-radius:9px}#devices{columns:2;font-size:14px}details{margin-top:20px}
+</style>
+<main>
+  <h1>eufy 录像提取</h1>
+  <p>连接账号，从家中的 HomeBase 3 读取历史事件录像。</p>
+  <form id="login">
+    <label for="email">账号邮箱</label><input id="email" type="email" autocomplete="username" required>
+    <label for="password">密码</label><input id="password" type="password" autocomplete="current-password" required>
+    <label for="country">账号国家 / 地区代码</label><input id="country" value="CA" maxlength="2" pattern="[a-zA-Z]{2}" required>
+    <small>与 eufy App 中的账号地区一致，例如美国 US、加拿大 CA、中国 CN。</small>
+    <button id="submit">登录</button>
+  </form>
+  <form id="verify" hidden>
+    <img id="captcha" alt="eufy 图片验证码" hidden>
+    <label for="code">验证码</label><input id="code" autocomplete="one-time-code" required>
+    <button id="verify-submit">提交验证码</button>
+  </form>
+  <div id="status" role="status" aria-live="polite">正在连接本地服务…</div>
+  <ul id="diagnostics"></ul>
+  <details><summary>已关联的设备</summary><ul id="devices"></ul></details>
+  <button id="reload-devices" type="button" hidden>重新读取设备</button>
+  <section id="recordings">
+    <h2>查找历史录像</h2>
+    <p>使用 Toronto 当地时间，自动处理夏令时。电脑需与 HomeBase 3 在同一局域网。</p>
+    <form id="query-recordings">
+      <label for="recording-device">摄像头</label><select id="recording-device" required></select>
+      <label for="recording-day">日期</label><input id="recording-day" type="date" required>
+      <div class="times"><div><label for="recording-start">开始时间</label><input id="recording-start" type="time" value="16:30" required></div><div><label for="recording-end">结束时间</label><input id="recording-end" type="time" value="16:50" required></div></div>
+      <button id="query-submit">查询事件录像</button>
+    </form>
+    <p id="recording-message" role="status"></p>
+    <div id="recording-results"></div>
+  </section>
+  <section><h2>已提取的录像</h2><p>以下文件已保存到本机。时间为事件索引时间，片头可能包含预录画面。事件片段不保证覆盖完整查询时段。</p><div id="saved-recordings"></div></section>
+  <small>此页面由本机项目提供，并非 eufy 官方网站。密码和登录会话仅保留在服务进程内存中，停止服务后清除。</small>
+</main>
+<script>
+  const el = id => document.getElementById(id);
+  el('recording-day').value = new Intl.DateTimeFormat('sv-SE', {timeZone:'America/Toronto',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  let deviceKey = '', resultKey = '', savedKey = '', recordingBusy = false;
+  const localTime = value => new Intl.DateTimeFormat('zh-CN', {timeZone:'America/Toronto',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(new Date(value));
+  async function refresh() {
+    try {
+      const response = await fetch('/status');
+      if (!response.ok) throw new Error();
+      const s = await response.json();
+      const devicesKey = JSON.stringify(s.devices);
+      if (deviceKey !== devicesKey) {
+        deviceKey = devicesKey;
+        const selected = el('recording-device').value;
+        el('recording-device').replaceChildren(...s.devices.filter(d => d.capabilities?.eventRecordings === true).map(d => {
+          const option = document.createElement('option'); option.value = d.serial; option.textContent = d.name + ' · ' + d.model;
+          option.selected = selected ? d.serial === selected : d.name === 'Drive Way'; return option;
+        }));
+      }
+      el('query-submit').disabled = s.busy || recordingBusy || s.phase !== 'connected' || !el('recording-device').value;
+      el('status').textContent = s.message;
+      el('submit').disabled = s.busy;
+      el('verify-submit').disabled = s.busy;
+      el('reload-devices').hidden = s.phase !== 'connected';
+      el('reload-devices').disabled = s.busy;
+      el('diagnostics').replaceChildren(...(s.diagnostics || []).map(text => {
+        const li = document.createElement('li');
+        li.textContent = text;
+        return li;
+      }));
+      el('login').hidden = ['tfa','captcha','connected'].includes(s.phase);
+      el('verify').hidden = !['tfa','captcha'].includes(s.phase);
+      el('captcha').hidden = s.phase !== 'captcha';
+      if (s.phase === 'captcha') el('captcha').src = s.captcha;
+      el('devices').replaceChildren(...s.devices.map(d => {
+        const li = document.createElement('li');
+        li.textContent = d.name + ' · ' + d.model;
+        return li;
+      }));
+    } catch { el('status').textContent = '本地服务连接中断，请重新启动项目。'; }
+  }
+  async function submit(url, data) {
+    try {
+      const response = await fetch(url, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+      const result = await response.json();
+      if (!response.ok) { el('status').textContent = result.error; return; }
+      el('password').value = '';
+      el('code').value = '';
+      await refresh();
+    } catch { el('status').textContent = '无法连接本地服务，请检查项目是否仍在运行。'; }
+  }
+  el('login').addEventListener('submit', e => {
+    e.preventDefault();
+    submit('/login', {email:el('email').value,password:el('password').value,country:el('country').value});
+  });
+  el('verify').addEventListener('submit', e => {
+    e.preventDefault(); submit('/verify', {code:el('code').value});
+  });
+  el('reload-devices').addEventListener('click', () => submit('/refresh', {}));
+  async function recordingAction(route, data) {
+    try {
+      const response = await fetch(route, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+      const result = await response.json();
+      if (!response.ok) { el('recording-message').textContent = result.error; return; }
+      await refreshRecordings();
+    } catch { el('recording-message').textContent = '录像服务连接失败。'; }
+  }
+  async function refreshRecordings() {
+    try {
+      const response = await fetch('/recordings/status');
+      if (!response.ok) throw new Error();
+      const state = await response.json(); recordingBusy = state.busy;
+      el('recording-message').textContent = state.message;
+      const nextResultKey = JSON.stringify([state.records, state.busy]);
+      if (nextResultKey !== resultKey) {
+        resultKey = nextResultKey;
+        el('recording-results').replaceChildren(...state.records.map(record => {
+          const div = document.createElement('div'); div.className = 'clip';
+          const label = document.createElement('span'); label.textContent = localTime(record.start) + ' — ' + localTime(record.end);
+          const button = document.createElement('button'); button.textContent = '提取此片段'; button.disabled = state.busy;
+          button.onclick = () => recordingAction('/recordings/download', {recordId:record.id});
+          div.append(label, button); return div;
+        }));
+      }
+      const nextSavedKey = JSON.stringify(state.saved);
+      if (savedKey !== nextSavedKey) {
+        savedKey = nextSavedKey;
+        el('saved-recordings').replaceChildren(...state.saved.map(clip => {
+          const div = document.createElement('div'); div.className = 'clip';
+          const label = document.createElement('strong'); label.textContent = clip.device + ' · ' + localTime(clip.start);
+          const video = document.createElement('video'); video.controls = true; video.preload = 'metadata'; video.src = clip.url;
+          const link = document.createElement('a'); link.href = clip.url + '?download'; link.textContent = '下载 MP4 · ' + (clip.bytes / 1024 / 1024).toFixed(1) + ' MB';
+          div.append(label, video, link); return div;
+        }));
+      }
+    } catch { el('recording-message').textContent = '录像服务暂时不可用。'; }
+  }
+  el('query-recordings').addEventListener('submit', event => {
+    event.preventDefault();
+    recordingAction('/recordings/query', {serial:el('recording-device').value,day:el('recording-day').value,start:el('recording-start').value,end:el('recording-end').value});
+  });
+  refreshRecordings(); setInterval(refreshRecordings, 1500);
+  refresh(); setInterval(refresh, 1500);
+</script>
+</html>

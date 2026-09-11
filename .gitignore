@@ -1,0 +1,12 @@
+node_modules/
+build/
+output/
+coverage/
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.venv/
+*.log
+.DS_Store
