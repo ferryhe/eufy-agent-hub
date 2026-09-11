@@ -5,6 +5,7 @@ const { JobService } = require('../../jobs/service.cjs');
 const { normalizeWindow } = require('./time-window.cjs');
 const { LocalContinuousRecordings } = require('./continuous.cjs');
 const { assessCompleteness } = require('./continuous-completeness.cjs');
+const { isAuthenticated } = require('../auth/session.cjs');
 
 const OUTPUT = path.resolve(__dirname, '../../output');
 const writeJson = (file, value) => fs.writeFileSync(file, JSON.stringify(value, null, 2));
@@ -43,6 +44,7 @@ class ContinuousExportService {
     if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
       throw new Error('Continuous job outputRoot must be a directory below this repository output/');
     this.python = python; this.ffmpeg = ffmpeg; this.createCapture = createCapture; this.execute = execute;
+    this.session = session;
     this.stopping = new AbortController();
     this.jobs = new JobService({ outputRoot, worker: context => this.export(context) });
   }
@@ -58,6 +60,11 @@ class ContinuousExportService {
 
   get(jobId) { return this.jobs.get(jobId); }
   whenIdle() { return this.jobs.whenIdle(); }
+
+  requireLogin() {
+    for (const job of this.jobs.list()) if (job.state === 'queued')
+      this.jobs.cancelQueued(job.jobId, { code: 'LOGIN_REQUIRED', message: 'Login is required. Submit a new request after signing in.' });
+  }
 
   async shutdown() {
     this.stopping.abort(new Error('Export service shutting down'));
@@ -80,11 +87,19 @@ class ContinuousExportService {
       stage = name; signal.throwIfAborted();
       return this.execute(executable, args, { directory: logs, stage, signal });
     };
+    const requireLogin = () => {
+      if (this.session && !isAuthenticated(this.session)) {
+        result.error = { code: 'LOGIN_REQUIRED', message: 'Login is required before capture.' };
+        throw new Error(result.error.message);
+      }
+    };
     try {
+      requireLogin();
       updateProgress('runtime', 0.02);
       await run('python-runtime', this.python, ['-c', 'import av; print(av.__version__)']);
       await run('ffmpeg-runtime', this.ffmpeg, ['-version']);
       stage = 'capture'; updateProgress(stage, 0.05); signal.throwIfAborted();
+      requireLogin();
       acquisition = this.createCapture();
       capture = await acquisition.captureRange(serial, begin, end, directory, { signal });
       // Always close our connection before another job on this HomeBase can start.
@@ -152,7 +167,7 @@ class ContinuousExportService {
       }
     } catch (error) {
       result.outcome = signal.aborted ? 'cancelled' : completeness?.status === 'partial' ? 'partial' : 'failed';
-      result.error = { code: signal.aborted ? 'CANCELLED' : 'EXPORT_STAGE_FAILED', message: error.message };
+      result.error = { code: signal.aborted ? 'CANCELLED' : result.error?.code || 'EXPORT_STAGE_FAILED', message: error.message };
       result.diagnostics.push({ stage, message: error.message });
     } finally {
       try { acquisition?.close(); }

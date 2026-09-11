@@ -5,6 +5,7 @@ const { pipeline } = require('node:stream/promises');
 const { isRecordingCamera, supportsEventRecordings } = require('../devices/recording-support.cjs');
 const { serviceError, messageI18n } = require('../../api/messages.cjs');
 const { validateDay } = require('./time-window.cjs');
+const { isAuthenticated } = require('../auth/session.cjs');
 
 function waitFor(emitter, event, action, select, timeoutMs = 45000) {
   return new Promise((resolve, reject) => {
@@ -26,10 +27,12 @@ class LocalRecordings {
   constructor(session) { this.session = session; }
 
   async connect(serial) {
-    if (!this.session.authenticated) throw serviceError('请先登录。', 'service.auth.loginRequired');
+    if (!isAuthenticated(this.session)) throw serviceError('请先登录。', 'service.auth.loginRequired');
     if (this.camera?.getSerial() === serial && this.station?.isConnected()) return;
     this.close();
     const inventory = await this.session.api.getDevsListDecrypted();
+    if (!isAuthenticated(this.session)) throw serviceError('请先登录。', 'service.auth.loginRequired');
+    this.userId = this.session.api.userId;
     const raw = inventory.devices.find(device => device.device_sn === serial);
     if (!raw) throw serviceError('未找到设备。', 'service.devices.notFound');
     const base = inventory.devices.find(device => device.device_sn === raw.parent_sn);
@@ -40,7 +43,7 @@ class LocalRecordings {
     const cameras = inventory.devices.filter(device => device.parent_sn === base.device_sn && isRecordingCamera(device))
       .map(device => ({ ...device, station_sn: base.device_sn }));
     const provider = {
-      isConnected: () => this.session.authenticated,
+      isConnected: () => true, // This provider belongs to this LAN connection; it never makes cloud requests.
       getDevices: () => Object.fromEntries(cameras.map(device => [device.device_sn, device])),
       refreshStationData: async () => {},
       // Local discovery and the library's LAN command encryption do not need legacy cloud keys.
@@ -103,6 +106,7 @@ class LocalRecordings {
     this.station = undefined;
     this.camera = undefined;
     if (this.status) this.status.connected = false;
+    this.userId = undefined;
   }
 
   async download(recordId, outputDir, window = null) {

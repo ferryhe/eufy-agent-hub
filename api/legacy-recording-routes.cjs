@@ -4,6 +4,7 @@ const { LocalRecordings } = require('../capabilities/recordings/events.cjs');
 const { exportRecording } = require('../capabilities/recordings/export.cjs');
 const { messageI18n, serviceError, setMessage, errorBody } = require('./messages.cjs');
 const { normalizeWindow, localTime, resolveTimezone, LEGACY_TIMEZONE } = require('../capabilities/recordings/time-window.cjs');
+const { isAuthenticated } = require('../capabilities/auth/session.cjs');
 
 function torontoTime(day, time) {
   return localTime(day, time, LEGACY_TIMEZONE);
@@ -89,10 +90,11 @@ function installRecordingRoutes(server, session, options = {}) {
       }
       if (req.method !== 'POST' || !['/recordings/query', '/recordings/download'].includes(route)) return send(404, {});
       if (req.headers.origin !== origin || !req.headers['content-type']?.startsWith('application/json')) return send(403, errorBody(serviceError('请从本地页面提交。', 'service.localPageRequired')));
-      if (!session.authenticated) return send(401, errorBody(serviceError('请先登录。', 'service.auth.loginRequired')));
+      if (!isAuthenticated(session)) return send(401, errorBody(serviceError('请先登录。', 'service.auth.loginRequired')));
       if (state.busy || options.isBusy?.() || session.state.phase === 'busy') return send(409, errorBody(serviceError('正在处理，请稍候。', 'service.busy')));
       let body = '';
       for await (const chunk of req) { body += chunk; if (body.length > 4096) return send(413, errorBody(serviceError('输入过长。', 'service.inputTooLong'))); }
+      if (!isAuthenticated(session)) return send(401, errorBody(serviceError('请先登录。', 'service.auth.loginRequired')));
       let data, query, selected;
       try {
         data = JSON.parse(body);

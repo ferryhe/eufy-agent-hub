@@ -48,6 +48,8 @@ function renderAuth() {
     el('verify-submit').disabled = s.busy;
     el('reload-devices').hidden = s.phase !== 'connected';
     el('reload-devices').disabled = s.busy;
+    el('logout').hidden = !['connected', 'tfa', 'captcha'].includes(s.phase);
+    el('logout').disabled = s.busy;
     el('diagnostics').replaceChildren(...(s.diagnostics || []).map((text, index) => {
       const li = document.createElement('li');
       li.textContent = i18n.message(text, s.diagnosticsI18n?.[index]); return li;
@@ -153,6 +155,7 @@ el('login').addEventListener('submit', event => {
 });
 el('verify').addEventListener('submit', event => { event.preventDefault(); submit('/verify', { code: el('code').value }); });
 el('reload-devices').addEventListener('click', () => submit('/refresh', {}));
+el('logout').addEventListener('click', () => submit('/logout', {}));
 el('query-recordings').addEventListener('submit', event => {
   event.preventDefault(); recordingAction('/recordings/query', {
     serial: el('recording-device').value, day: el('recording-day').value, start: el('recording-start').value, end: el('recording-end').value, timezone: 'America/Toronto',

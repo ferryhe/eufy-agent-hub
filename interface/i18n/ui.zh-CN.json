@@ -38,5 +38,6 @@
   "ui.error.credentials": "请填写邮箱、密码和两位国家代码。",
   "ui.error.loginFirst": "请先完成登录。",
   "ui.error.verifyFirst": "请先登录，再输入验证码。",
-  "ui.error.inputFormat": "输入格式有误。"
+  "ui.error.inputFormat": "输入格式有误。",
+  "ui.logout": "登出"
 }

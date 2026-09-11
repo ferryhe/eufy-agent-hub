@@ -118,6 +118,135 @@ async function splitBody(f, route, data) {
   return { finish: () => { request.end(text.slice(middle)); return response; } };
 }
 
+test('legacy recording admissions reject expired sessions before and after a split body', async t => {
+  for (const split of [false, true]) await t.test(String(split), async t => {
+    let queries = 0;
+    const f = await fixture(t, { recordings: { close() {}, listWindow: async () => { queries++; return []; } } });
+    await f.login();
+    const data = { serial: 'CAMERA123', day: '2026-08-27', start: '16:30', end: '16:31' };
+    const pending = split ? await splitBody(f, '/recordings/query', data) : null;
+    f.api.hasValidSession = () => false;
+    const response = pending ? await pending.finish() : await f.json('/recordings/query', data);
+    assert.equal(response.status, 401);
+    assert.equal(queries, 0);
+  });
+});
+
+test('versioned login and legacy verification share one captcha/email flow; CLI may omit Origin', async t => {
+  const f = await fixture(t); const codes = [100032, 26052, 26050, 0]; let loginCalls = 0;
+  f.api.login = async () => { loginCalls++; return { code: codes.shift() }; };
+  f.api.generateCaptcha = async () => ({ captcha_id: 'shared-image', item: 'image' });
+  f.api.sendVerifyCode = async () => ({ code: 0 });
+  const login = await fetch(f.origin + '/api/v1/session/login', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'fixture@example.test', password: 'fixture', country: 'CA' }) });
+  assert.equal(login.status, 202);
+  let state = (await f.json('/api/v1/session', undefined, 'session')).value;
+  assert.equal(state.phase, 'captcha'); assert.match(state.captcha, /^data:image/);
+  assert.equal((await f.json('/verify', { code: 'image-answer' })).status, 202);
+  assert.equal((await f.json('/status')).value.phase, 'tfa');
+  assert.equal((await f.json('/api/v1/session/verify', { code: 'wrong' })).status, 202);
+  assert.equal((await f.json('/api/v1/session', undefined, 'session')).value.phase, 'tfa');
+  assert.equal((await f.json('/api/v1/session/verify', { code: '123456' })).status, 202);
+  state = (await f.json('/api/v1/session', undefined, 'session')).value;
+  assert.equal(state.authenticated, true); assert.equal(state.captcha, null);
+  assert.equal(f.session.api, f.api); assert.equal(loginCalls, 4);
+  assert.equal((await f.json('/api/v1/session/logout', {})).status, 202);
+  assert.equal((await f.json('/status')).value.phase, 'login_required');
+  assert.equal((await f.json('/api/v1/devices')).status, 401);
+  assert.equal((await f.json('/refresh', {})).status, 401);
+});
+
+test('logout ends queued work with LOGIN_REQUIRED while an owned capture finishes and remains readable', async t => {
+  let release; const gate = new Promise(resolve => { release = resolve; }); t.after(() => release());
+  const f = await fixture(t, { gate }); await f.login();
+  const first = (await f.json('/api/v1/exports', request, 'submission')).value.job;
+  const second = (await f.json('/api/v1/exports', { ...request, requestId: 'queued-logout' }, 'submission')).value.job;
+  assert.equal(f.calls.capture, 1);
+  const logout = await splitBody(f, '/api/v1/session/logout', {});
+  assert.equal((await logout.finish()).status, 202);
+  assert.equal(f.session.api, undefined); assert.equal(f.session.credentials, undefined);
+  const cancelled = (await f.json(`/api/v1/jobs/${second.jobId}`, undefined, 'jobResponse')).value.job;
+  assert.equal(cancelled.state, 'cancelled'); assert.equal(cancelled.error.code, 'LOGIN_REQUIRED');
+  assert.equal(cancelled.result.outcome, 'cancelled');
+  const stored = JSON.parse(fs.readFileSync(path.join(f.directory, 'jobs', second.jobId, 'metadata.json')));
+  assert.equal(stored.error.code, 'LOGIN_REQUIRED');
+  const reused = await f.json('/api/v1/exports', { requestId: second.requestId }, 'submission');
+  assert.equal(reused.status, 200); assert.equal(reused.value.job.jobId, second.jobId);
+  assert.equal((await f.json('/api/v1/exports', { ...request, requestId: 'new-logout' })).status, 401);
+  assert.equal((await f.json('/login', {})).status, 409);
+  release(); const finished = await f.terminal(first.jobId);
+  assert.equal(finished.state, 'succeeded'); assert.equal(f.calls.capture, 1);
+  const artifact = finished.artifacts.find(item => item.playable);
+  assert.equal((await fetch(f.origin + artifact.url)).status, 200);
+  await f.login(); assert.equal((await f.json('/api/v1/devices')).status, 200);
+});
+
+test('expiry projects waiting jobs as LOGIN_REQUIRED and blocks capture when their turn arrives', async t => {
+  let release; const gate = new Promise(resolve => { release = resolve; }); t.after(() => release());
+  const f = await fixture(t, { gate }); await f.login();
+  const first = (await f.json('/api/v1/exports', request, 'submission')).value.job;
+  const second = (await f.json('/api/v1/exports', { ...request, requestId: 'queued-expiry' }, 'submission')).value.job;
+  f.api.hasValidSession = () => false;
+  const waiting = (await f.json(`/api/v1/jobs/${second.jobId}`, undefined, 'jobResponse')).value.job;
+  assert.equal(waiting.state, 'queued'); assert.equal(waiting.stage, 'login_required'); assert.equal(waiting.error.code, 'LOGIN_REQUIRED');
+  assert.equal((await f.json('/api/v1/session', undefined, 'session')).value.phase, 'login_required');
+  release(); await f.terminal(first.jobId);
+  const failed = await f.terminal(second.jobId);
+  assert.equal(failed.state, 'failed'); assert.equal(failed.error.code, 'LOGIN_REQUIRED');
+  assert.equal(failed.result.validation.passed, false); assert.ok(failed.artifacts.some(item => item.name === 'result.json'));
+  assert.equal(f.calls.capture, 1);
+});
+
+test('logout while cloud admissions wait rejects new work after body and inventory boundaries', async t => {
+  for (const boundary of ['body', 'inventory']) for (const route of ['/api/v1/exports', '/api/v1/devices/camera/recording-ranges'])
+    await t.test(`${boundary} ${route}`, async t => {
+      const f = await fixture(t); await f.login();
+      const data = route.endsWith('exports') ? request : { day: request.day, start: request.start, end: request.end };
+      let pending, release;
+      if (boundary === 'body') pending = await splitBody(f, route, data);
+      else {
+        let entered; const started = new Promise(resolve => { entered = resolve; });
+        const gate = new Promise(resolve => { release = resolve; }); t.after(() => release());
+        f.api.getDevsListDecrypted = async () => { entered(); await gate; return { devices: f.raw }; };
+        pending = f.json(route, data); await started;
+      }
+      assert.equal((await f.json('/logout', {})).status, 202);
+      const response = boundary === 'body' ? await pending.finish() : (release(), await pending);
+      assert.equal(response.status, 401); assert.equal(response.value.error.code, 'UNAUTHENTICATED');
+      assert.equal(f.calls.capture, 0); assert.equal(f.calls.range, 0);
+    });
+});
+
+test('versioned auth replacement keeps final body admission guards', async t => {
+  for (const route of ['/api/v1/session/login', '/api/v1/session/verify', '/api/v1/session/refresh'])
+    await t.test(route, async t => {
+      let release; const rangeGate = new Promise(resolve => { release = resolve; }); t.after(() => release());
+      const f = await fixture(t, { rangeGate }); await f.login();
+      const data = route.endsWith('login') ? { email: 'new@example.test', password: 'new', country: 'CA' } : { code: '123456' };
+      const pending = await splitBody(f, route, data);
+      const range = f.json('/api/v1/devices/camera/recording-ranges', { day: request.day, start: request.start, end: request.end });
+      while (!f.calls.range) await new Promise(resolve => setImmediate(resolve));
+      const response = await pending.finish(); assert.equal(response.status, 409); assert.equal(f.session.api, f.api);
+      release(); await range;
+    });
+});
+
+test('logout while media preparation is pending prevents new capture and preserves diagnostics', async t => {
+  let release, entered; const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; }); t.after(() => release());
+  const execute = media();
+  const f = await fixture(t, { execute: async (...args) => {
+    if (args[2].stage === 'python-runtime') { entered(); await gate; }
+    return execute(...args);
+  } }); await f.login();
+  const first = (await f.json('/api/v1/exports', request, 'submission')).value.job;
+  await started;
+  assert.equal((await f.json('/api/v1/session/logout', {})).status, 202);
+  release(); const failed = await f.terminal(first.jobId);
+  assert.equal(failed.error.code, 'LOGIN_REQUIRED'); assert.equal(f.calls.capture, 0);
+  assert.ok(failed.artifacts.some(item => item.name === 'result.json'));
+});
+
 test('split-body auth admissions cannot replace or refresh a session after v1 acquires it', async t => {
   for (const route of ['/login', '/refresh', '/verify']) {
     await t.test(route, async t => {

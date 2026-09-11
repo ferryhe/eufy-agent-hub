@@ -38,5 +38,6 @@
   "ui.error.credentials": "Enter your email, password and two-letter country code.",
   "ui.error.loginFirst": "Please finish signing in first.",
   "ui.error.verifyFirst": "Sign in first, then enter the verification code.",
-  "ui.error.inputFormat": "Invalid input format."
+  "ui.error.inputFormat": "Invalid input format.",
+  "ui.logout": "Sign out"
 }

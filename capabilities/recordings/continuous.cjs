@@ -116,7 +116,7 @@ class LocalContinuousRecordings extends LocalRecordings {
         p2p.on('livestream error',errorListener);
         p2p.on('livestream stopped',stoppedListener);
         p2p.on('close',closeListener);
-        try { p2p.startContinuousPlayback(serial,channel,this.session.api.userId,segment.begin); }
+        try { p2p.startContinuousPlayback(serial,channel,this.userId,segment.begin); }
         catch (error) { finish(error); }
       });
     } finally {

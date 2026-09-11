@@ -7,6 +7,7 @@ const { recordingSegments } = require('../capabilities/recordings/continuous-com
 const { continuousDevices } = require('../capabilities/devices/continuous-mapping.cjs');
 const { serveMedia } = require('./legacy-recording-routes.cjs');
 const { contract, validateRequest } = require('./v1-contract.cjs');
+const { isAuthenticated } = require('../capabilities/auth/session.cjs');
 
 const fault = (status, code, message) => Object.assign(new Error(message), { status, code });
 const timeErrors = {
@@ -30,19 +31,20 @@ function artifactList(job) {
       url: `/api/v1/jobs/${job.jobId}/artifacts/${id}` };
   });
 }
-function jobView(job) {
+function jobView(job, loginRequired = false) {
   const { jobId, requestId, homeBaseId, state, stage, progress, createdAt, updatedAt, input, result } = job;
-  const code = state === 'cancelled' ? 'JOB_CANCELLED' : state !== 'failed' ? null
+  const code = loginRequired || job.error?.code === 'LOGIN_REQUIRED' ? 'LOGIN_REQUIRED' : state === 'cancelled' ? 'JOB_CANCELLED' : state !== 'failed' ? null
     : result?.outcome === 'partial' ? 'PARTIAL_RECORDING' : 'EXPORT_FAILED';
   return { jobId, requestId, homeBaseId, serial: input.serial, window: input.window,
-    state, stage, progress, createdAt, updatedAt, result, artifacts: artifactList(job),
+    state, stage: loginRequired ? 'login_required' : stage, progress, createdAt, updatedAt, result, artifacts: artifactList(job),
     error: code ? { code, message: job.error?.message || code } : null };
 }
 
 function installV1Routes(server, session, options) {
   let exporter, pending = 0, rangeBusy = false, stopping = false;
   // Report known cloud expiry without logging out or disturbing accepted local work.
-  const cloudAuthenticated = () => Boolean(session.authenticated && session.api?.hasValidSession?.() !== false);
+  const cloudAuthenticated = () => isAuthenticated(session);
+  const view = job => jobView(job, job.state === 'queued' && !cloudAuthenticated());
   const requireCloudSession = () => {
     if (!cloudAuthenticated()) throw fault(401, 'UNAUTHENTICATED', 'Complete the local login first.');
   };
@@ -66,12 +68,17 @@ function installV1Routes(server, session, options) {
         return original(req, res);
       }
       if (req.headers.host !== new URL(origin).host) throw fault(403, 'LOCAL_HOST_REQUIRED', 'Use the local service address.');
+      if (req.method === 'POST' && /^\/api\/v1\/session\/(login|verify|logout|refresh)$/.test(route)) {
+        if (stopping) throw fault(503, 'SERVICE_STOPPING', 'The resident service is shutting down.');
+        if (options.isBusy()) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
+        return original(req, res);
+      }
       if (route === '/api/v1/contract' && req.method === 'GET') return send(200, contract);
       if (route === '/api/v1/session' && req.method === 'GET') return send(200, {
         authenticated: cloudAuthenticated(), phase: session.state.phase,
-        busy: Boolean(options.isBusy() || active()), loginUrl: '/login', verificationUrl: '/verify',
+        captcha: session.state.phase === 'captcha' ? session.state.captcha : null,
+        busy: Boolean(options.isBusy() || active()), loginUrl: '/api/v1/session/login', verificationUrl: '/api/v1/session/verify', logoutUrl: '/api/v1/session/logout',
       });
-      if (!session.authenticated) throw fault(401, 'UNAUTHENTICATED', 'Complete the local login first.');
       if (stopping) throw fault(503, 'SERVICE_STOPPING', 'The resident service is shutting down.');
       const match = /^\/api\/v1\/devices(?:\/([^/]+)(?:\/(recording-ranges))?)?$/.exec(route);
       if (match && ((req.method === 'GET' && !match[2]) || (req.method === 'POST' && match[2]))) {
@@ -107,11 +114,10 @@ function installV1Routes(server, session, options) {
       }
       if (route === '/api/v1/exports' && req.method === 'POST') {
         const data = await body(req, origin, 'identity');
-        if (!session.authenticated) throw fault(401, 'UNAUTHENTICATED', 'Complete the local login first.');
         if (stopping) throw fault(503, 'SERVICE_STOPPING', 'The resident service is shutting down.');
         const service = getExporter();
         const existing = service.jobs.list().find(job => job.requestId === data.requestId);
-        if (existing) return send(200, { job: jobView(existing), reused: true });
+        if (existing) return send(200, { job: view(existing), reused: true });
         requireCloudSession();
         validateRequest('export', data);
         if (options.isBusy() || rangeBusy) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
@@ -120,7 +126,7 @@ function installV1Routes(server, session, options) {
           const devices = await inventory();
           // Another HTTP request can submit this identity while inventory is in flight.
           const reused = service.jobs.list().find(job => job.requestId === data.requestId);
-          if (reused) return send(200, { job: jobView(reused), reused: true });
+          if (reused) return send(200, { job: view(reused), reused: true });
           const device = findDevice(devices, data.serial);
           requireSupported(device);
           windowOf(data); // Shared contract supplies stable validation errors before durable submission.
@@ -128,14 +134,14 @@ function installV1Routes(server, session, options) {
           try { job = service.submit({ ...data, homeBaseId: device.homeBaseId }); }
           catch (error) { throw fault(409, 'JOB_UNAVAILABLE', error.message); }
           accepted.add(job.jobId);
-          return send(202, { job: jobView(job), reused: false });
+          return send(202, { job: view(job), reused: false });
         } finally { release(); }
       }
       const jobMatch = /^\/api\/v1\/jobs\/([^/]+)(?:\/(artifacts)(?:\/([^/]+))?)?$/.exec(route);
       if (jobMatch && ['GET', 'HEAD'].includes(req.method)) {
         const job = getExporter().get(jobMatch[1]);
         if (!job) throw fault(404, 'JOB_NOT_FOUND', 'Unknown job.');
-        if (!jobMatch[2] && req.method === 'GET') return send(200, { job: jobView(job) });
+        if (!jobMatch[2] && req.method === 'GET') return send(200, { job: view(job) });
         if (!jobMatch[3] && req.method === 'GET') return send(200, { jobId: job.jobId, artifacts: artifactList(job) });
         const artifact = artifactList(job).find(item => item.id === jobMatch[3]);
         if (!artifact) throw fault(404, 'ARTIFACT_NOT_FOUND', 'Unknown artifact for this job.');
@@ -167,6 +173,7 @@ function installV1Routes(server, session, options) {
   }
   return {
     isBusy: active,
+    loggedOut: () => exporter?.requireLogin(),
     async shutdown() {
       stopping = true;
       // Admissions already in flight settle before we stop the resident worker.

@@ -81,13 +81,13 @@ class JobService {
     return this.get(jobId);
   }
 
-  cancelQueued(jobId) {
+  cancelQueued(jobId, error = { code: 'CANCELLED', message: 'Cancelled before execution' }) {
     const job = this.#requireJob(jobId);
     if (job.state === 'cancelled') return this.get(jobId);
     if (job.state !== 'queued') throw new Error('Only queued jobs can be cancelled by Phase A controls');
     this.#transition(jobId, 'cancelled', {
       result: { outcome: 'cancelled' },
-      error: { code: 'CANCELLED', message: 'Cancelled before execution' },
+      error,
     });
     return this.get(jobId);
   }
