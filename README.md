@@ -40,6 +40,7 @@ npm start
 
 Open **http://127.0.0.1:3187/** and sign in on the page. Account sessions are not migrated with the source and must be re-established after a service restart.
 The interface follows the browser's preferred language (English or Simplified Chinese, with English fallback). A language selector remembers manual overrides. Recording queries still use `America/Toronto`; see the [interface localization contract](interface/i18n/README.md).
+API callers may supply an IANA `timezone`; omitted values use `EUFY_RECORDING_TIMEZONE` or `America/Toronto`. The fixed page explicitly keeps Toronto time. See the [recording time-window contract](docs/recording-time-window.md) for DST handling, persisted export context and actual-coverage limits.
 `setup` installs the protocol library's locked dependencies. `build` compiles its source and copies required assets; capability scripts load the result through the adapter.
 
 If the old project still occupies port 3187, select another port in PowerShell:
@@ -172,6 +173,7 @@ npm start
 
 打开 **http://127.0.0.1:3187/**，在页面中登录。账号会话不随源码迁移，服务重启后需要重新登录。
 界面默认跟随浏览器语言，支持英文和简体中文，其他语言回退到英文；可手动切换并记住选择。录像查询仍使用 `America/Toronto`，详见 [界面多语言约定](interface/i18n/README.md)。
+API 调用方可明确提供 IANA `timezone`；省略时使用 `EUFY_RECORDING_TIMEZONE`，未配置则使用 `America/Toronto`。固定页面仍明确使用 Toronto 时间。夏令时处理、导出时间上下文与实际覆盖范围的区别见 [录像时间窗口约定](docs/recording-time-window.md)。
 `setup` 根据协议库锁文件安装依赖；`build` 编译协议源码并复制必要资源，业务脚本通过适配器加载构建结果。
 
 若旧项目仍占用 3187，可在 PowerShell 中选择另一个端口：

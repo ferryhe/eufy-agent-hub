@@ -77,7 +77,57 @@ test('download finish without device confirmation is not successful', async t =>
   // Let both failed attempt output streams settle before reusing the paths.
   await new Promise(resolve => setTimeout(resolve,30));
   confirmed = true;
-  const result = await service.download(1,directory);
+  const window = require('./time-window.cjs').normalizeWindow({day:'2026-08-27',start:'16:30',end:'16:50',timezone:'Asia/Shanghai'});
+  const result = await service.download(1,directory,window);
   assert.equal(result.complete,true);
   assert.equal(JSON.parse(fs.readFileSync(path.join(directory,'1.json'))).complete,true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(directory,'1.json'))).window,window);
+});
+
+test('query translates caller instants to protocol calendar dates in each station process timezone', () => {
+  const { spawnSync } = require('node:child_process');
+  const script = `
+    const { LocalRecordings } = require('./capabilities/recordings/events.cjs');
+    const { Station } = require('./adapters/eufy');
+    const { normalizeWindow } = require('./capabilities/recordings/time-window.cjs');
+    const { EventEmitter } = require('node:events');
+    const service = new LocalRecordings({}), station = new EventEmitter();
+    station.getSerial = () => 'BASE'; station.hasCommand = () => true;
+    station.rawStation = {member:{admin_user_id:'fixture'}};
+    const rows = [
+      {record_id:1,device_sn:'CAMERA',station_sn:'BASE',start_time:new Date('2026-08-26T16:15:00Z'),end_time:new Date('2026-08-26T16:20:00Z')},
+      {record_id:2,device_sn:'CAMERA',station_sn:'BASE',start_time:new Date('2026-08-27T04:00:00Z'),end_time:new Date('2026-08-27T04:10:00Z')},
+      {record_id:3,device_sn:'CAMERA',station_sn:'BASE',start_time:new Date('2026-08-27T05:00:00Z'),end_time:new Date('2026-08-27T05:10:00Z')}
+    ];
+    const payloads = [];
+    station.p2pSession = {sendCommandWithStringPayload: request => {
+      payloads.push(JSON.parse(request.value).payload.payload);
+      station.emit('database query by date', station, 0, rows);
+    }};
+    station.databaseQueryByDate = Station.prototype.databaseQueryByDate;
+    service.station = station; service.connect = async () => {};
+    (async () => {
+      const window = normalizeWindow({day:'2026-08-27',start:'00:10',end:'13:00',timezone:'Asia/Shanghai'});
+      const result = await service.listWindow('CAMERA',window);
+      await service.listDay('CAMERA','2026-08-27');
+      console.log(JSON.stringify({payloads,ids:result.map(row=>row.record_id)}));
+    })().catch(error => {console.error(error);process.exitCode=1;});
+  `;
+  for (const [timezone, startDate] of [['America/Toronto','20260826'], ['UTC','20260826'], ['Asia/Shanghai','20260827']]) {
+    const child = spawnSync(process.execPath, ['-e', script], {cwd:path.join(__dirname,'../..'), env:{...process.env,TZ:timezone},encoding:'utf8'});
+    assert.equal(child.status,0,child.stderr);
+    const {payloads,ids} = JSON.parse(child.stdout);
+    assert.equal(payloads[0].start_date,startDate,timezone);
+    assert.equal(payloads[0].end_date,'20260828',timezone);
+    assert.equal(payloads[0].start_time,`${startDate}000000`);
+    assert.equal(payloads[1].start_date,'20260827','legacy calendar date must not shift');
+    assert.equal(payloads[1].end_date,'20260828');
+    assert.deepEqual(ids,[1,2]);
+  }
+});
+
+test('day query rejects impossible calendar dates before connecting', async () => {
+  const service = new LocalRecordings({});
+  service.connect = async () => { throw new Error('connected with invalid date'); };
+  await assert.rejects(service.listDay('CAMERA', '2026-02-30'), error => error.i18n?.key === 'service.recordings.invalidDate');
 });

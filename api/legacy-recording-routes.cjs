@@ -3,25 +3,17 @@ const path = require('node:path');
 const { LocalRecordings } = require('../capabilities/recordings/events.cjs');
 const { exportRecording } = require('../capabilities/recordings/export.cjs');
 const { messageI18n, serviceError, setMessage, errorBody } = require('./messages.cjs');
-
-const timezone = 'America/Toronto';
-const clock = new Intl.DateTimeFormat('sv-SE', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+const { normalizeWindow, localTime, resolveTimezone, LEGACY_TIMEZONE } = require('../capabilities/recordings/time-window.cjs');
 
 function torontoTime(day, time) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !/^\d{2}:\d{2}$/.test(time)) throw serviceError('请填写有效的日期和时间。', 'service.recordings.invalidDateTime');
-  const local = `${day} ${time}:00`;
-  const naive = Date.parse(`${day}T${time}:00Z`);
-  const matches = [4, 5].map(offset => naive + offset * 3600000).filter(value => Number.isFinite(value) && clock.format(value) === local);
-  if (matches.length !== 1) throw serviceError('此时间不存在或因夏令时重复，请选择明确的时间。', 'service.recordings.ambiguousTime');
-  return matches[0];
+  return localTime(day, time, LEGACY_TIMEZONE);
 }
 
-function parseWindow(data) {
-  if (typeof data.serial !== 'string' || !/^[a-z\d]{8,32}$/i.test(data.serial)) throw serviceError('请选择设备。', 'service.devices.select');
-  const start = torontoTime(data.day, data.start);
-  const end = torontoTime(data.day, data.end);
-  if (end <= start) throw serviceError('结束时间必须晚于开始时间，且在同一天。', 'service.recordings.invalidEndTime');
-  return { serial: data.serial, day: data.day, start, end, timezone };
+function parseWindow(data, options) {
+  if (typeof data?.serial !== 'string' || !/^[a-z\d]{8,32}$/i.test(data.serial)) throw serviceError('请选择设备。', 'service.devices.select');
+  const window = normalizeWindow(data, options);
+  return { serial: data.serial, day: data.day, start: Date.parse(window.normalized.start),
+    end: Date.parse(window.normalized.end), timezone: window.normalized.timezone, window, coverage: null };
 }
 
 function serveMedia(req, res, file) {
@@ -50,10 +42,11 @@ function installRecordingRoutes(server, session, options = {}) {
   const getOrigin = options.getOrigin || (() => `http://127.0.0.1:${server.address()?.port || 3187}`);
   const outputRoot = path.resolve(options.outputRoot || path.join(__dirname, '../output'));
   const recordings = options.recordings || new LocalRecordings(session);
-  const state = { busy: false, message: '选择设备和 Toronto 时间，查询事件录像。', query: null, records: [], saved: [] };
+  const timezone = resolveTimezone(options.defaultTimezone);
+  const state = { busy: false, timezone, message: '选择设备和时间，查询事件录像。', query: null, records: [], saved: [] };
   state.messageI18n = messageI18n('service.recordings.idle');
   const media = new Map();
-  function addSaved(clip, device, serial) {
+  function addSaved(clip, device, serial, manifestTimezone) {
     const file = path.resolve(clip.file);
     if (!file.startsWith(outputRoot + path.sep) || !fs.existsSync(file) || path.extname(file) !== '.mp4') return;
     const id = Buffer.from(path.relative(outputRoot, file)).toString('base64url');
@@ -62,7 +55,9 @@ function installRecordingRoutes(server, session, options = {}) {
       const metadataFile = path.join(path.dirname(file), 'raw', `${clip.recordId}.json`);
       if (fs.existsSync(metadataFile)) serial = JSON.parse(fs.readFileSync(metadataFile, 'utf8')).record.device_sn;
     }
-    const saved = { id, device, serial, recordId: String(clip.recordId), start: clip.start, end: clip.end, bytes: clip.bytes, url: `/recordings/media/${id}` };
+    const saved = { id, device, serial, recordId: String(clip.recordId), start: clip.start, end: clip.end,
+      timezone: clip.window?.normalized.timezone || clip.timezone || manifestTimezone || LEGACY_TIMEZONE,
+      window: clip.window ?? null, coverage: clip.coverage ?? null, bytes: clip.bytes, url: `/recordings/media/${id}` };
     state.saved = [...state.saved.filter(item => item.id !== id && !(serial && item.serial === serial && item.recordId === saved.recordId)), saved];
     state.saved.sort((a,b) => Date.parse(a.start) - Date.parse(b.start));
   }
@@ -70,7 +65,7 @@ function installRecordingRoutes(server, session, options = {}) {
     for (const directory of fs.readdirSync(outputRoot, { withFileTypes: true }).filter(item => item.isDirectory())) {
       const file = path.join(outputRoot, directory.name, 'manifest.json');
       if (!fs.existsSync(file)) continue;
-      try { const manifest = JSON.parse(fs.readFileSync(file, 'utf8')); for (const clip of manifest.clips || []) addSaved(clip, manifest.device, manifest.serial); } catch { /* Ignore incomplete exports. */ }
+      try { const manifest = JSON.parse(fs.readFileSync(file, 'utf8')); for (const clip of manifest.clips || []) addSaved(clip, manifest.device, manifest.serial, manifest.timezone); } catch { /* Ignore incomplete exports. */ }
     }
   }
   const original = server.listeners('request')[0];
@@ -101,7 +96,7 @@ function installRecordingRoutes(server, session, options = {}) {
       let data, query, selected;
       try {
         data = JSON.parse(body);
-        if (route.endsWith('/query')) query = parseWindow(data);
+        if (route.endsWith('/query')) query = parseWindow(data, { defaultTimezone: timezone });
         else {
           selected = state.records.find(record => record.id === String(data.recordId));
           if (!selected) throw serviceError('请先查询并选择录像。', 'service.recordings.selectFirst');
@@ -111,23 +106,26 @@ function installRecordingRoutes(server, session, options = {}) {
       state.busy = true;
       setMessage(state, query ? '正在读取 HomeBase 的事件录像索引…' : '正在下载并转换录像，完成后可播放…',
         messageI18n(query ? 'service.recordings.querying' : 'service.recordings.exporting'));
-      send(202, { ok: true });
+      send(202, { ok: true, timezone: (query || state.query).timezone, window: (query || state.query).window, coverage: null });
       try {
         if (query) {
           state.records = []; state.query = query;
-          const records = await recordings.listDay(query.serial, query.day);
+          const records = await recordings.listWindow(query.serial, query.window);
           state.records = records.filter(record => record.start_time.getTime() < query.end && record.end_time.getTime() > query.start)
             .sort((a, b) => a.start_time - b.start_time)
-            .map(record => ({ id: String(record.record_id), start: record.start_time.toISOString(), end: record.end_time.toISOString() }));
+            .map(record => ({ id: String(record.record_id), start: record.start_time.toISOString(), end: record.end_time.toISOString(), timezone: query.timezone, coverage: null }));
           setMessage(state, `找到 ${state.records.length} 段事件录像。此列表不代表完整连续录像。`, messageI18n('service.recordings.found', { count: state.records.length }));
         } else {
           const query = state.query;
           const directory = path.join(outputRoot, `${query.serial}_${query.day}`);
-          const result = await recordings.download(Number(selected.id), path.join(directory, 'raw'));
+          const result = await recordings.download(Number(selected.id), path.join(directory, 'raw'), query.window);
           const clip = await exportRecording(result.prefix, path.join(directory, `${query.serial}_${selected.id}.mp4`));
           const manifestFile = path.join(directory, 'manifest.json');
-          const manifest = fs.existsSync(manifestFile) ? JSON.parse(fs.readFileSync(manifestFile, 'utf8')) : { device: recordings.status.device, serial: query.serial, timezone, continuousCoverage: false, clips: [] };
+          const manifest = fs.existsSync(manifestFile) ? JSON.parse(fs.readFileSync(manifestFile, 'utf8')) : { device: recordings.status.device, serial: query.serial, continuousCoverage: false, clips: [] };
           manifest.clips = [...manifest.clips.filter(item => String(item.recordId) !== selected.id), clip];
+          // A directory can hold exports requested in different zones. Each clip is authoritative.
+          const zones = new Set(manifest.clips.map(item => item.timezone || manifest.timezone || LEGACY_TIMEZONE));
+          manifest.timezone = zones.size === 1 ? [...zones][0] : null;
           fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));
           addSaved(clip, manifest.device, query.serial);
           setMessage(state, '录像已保存，并通过完整解码检查。可在下方播放或下载。', messageI18n('service.recordings.saved'));
