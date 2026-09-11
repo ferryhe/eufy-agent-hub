@@ -9,6 +9,6 @@
     "setup": "npm --prefix vendor/eufy-security-client ci",
     "build": "npm --prefix vendor/eufy-security-client run build:ts",
     "start": "node interface/server.cjs",
-    "test": "node --test \"capabilities/**/*.test.cjs\" \"api/**/*.test.cjs\" \"interface/**/*.test.cjs\""
+    "test": "node --test \"capabilities/**/*.test.cjs\" \"api/**/*.test.cjs\" \"interface/**/*.test.cjs\" \"jobs/**/*.test.cjs\""
   }
 }

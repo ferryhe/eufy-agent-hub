@@ -6,7 +6,7 @@
 
 An eufy capability platform for agents: account access, device discovery, recording queries, and exports are organized into reusable modules, with a shared CLI/API, agent integration, and interfaces planned on top.
 
-**This release is a runnable migration foundation.** Account access, device listing, event-recording pages, and their capabilities have been migrated. Continuous historical playback remains experimental. CLI, v1 API, persistent jobs, agent integration, and the dynamic interface are not implemented yet; GitHub Issues track that work.
+**This release is a runnable migration foundation.** Account access, device listing, event-recording pages, and their capabilities have been migrated. Continuous historical playback remains experimental. The minimum durable job module is available for service integration. CLI, v1 API, agent integration, and the dynamic interface are not implemented yet; GitHub Issues track that work.
 
 ### Available capabilities
 
@@ -19,7 +19,8 @@ An eufy capability platform for agents: account access, device discovery, record
 | [capabilities/live](capabilities/live) | Ownership of live-video capabilities | Wrapping and hardware validation pending |
 | [api](api) | The original page's login and event-recording HTTP protocol | Legacy protocol migrated; not a v1 agent API |
 | [interface](interface) | Fixed login, device, event-recording, and player page | Runnable; agent sidebar and dynamic workspace pending |
-| [cli](cli) / [jobs](jobs) / [agent](agent) | Command-line, job-service, and tool-orchestration boundaries | Directories and documentation only; no runtime implementation |
+| [jobs](jobs) | Durable job identity, state, per-HomeBase queue, and output ownership | Phase A module with offline tests; service/recording integration and Phase B recovery pending |
+| [cli](cli) / [agent](agent) | Command-line and tool-orchestration boundaries | Directories and documentation only; no runtime implementation |
 | [adapters/eufy](adapters/eufy) | Shared entry point to the protocol library | Builds independently |
 
 “Validated migration” means the prototype performed real operations on the current account or device and passed offline regression tests after migration. It does not mean every device model has been validated.
@@ -76,7 +77,7 @@ capabilities/                Reusable business capabilities
 adapters/eufy/               Mega/P2P protocol entry point
 api/                        Legacy HTTP now; v1 API planned
 cli/                        Planned command-line client
-jobs/                       Planned persistent job execution and state
+jobs/                       Phase A durable job execution and state contract
 agent/                      Planned tools and agent orchestration
 interface/
   pages/                    Fixed feature pages
@@ -114,7 +115,7 @@ Each item records evidence, gaps, acceptance criteria, and dependencies. Start w
 
 Documentation convention: this root README is bilingual (English and Chinese); all other project documentation, including module READMEs, is written in English.
 
-Tests live alongside capabilities, API, and interface code. `npm test` does not require a real account or HomeBase. It covers login challenges, device-discovery failures, query limits, download-completion confirmation, continuous frame timestamps, HTTP Range, and service ports.
+Tests live alongside capabilities, API, interface, and jobs code. Job tests cover durable identity, queuing, validation gates, and execution after a separate submitting client exits. `npm test` does not require a real account or HomeBase. It covers login challenges, device-discovery failures, query limits, download-completion confirmation, continuous frame timestamps, HTTP Range, and service ports.
 Migration also received independent review, an offline build with an empty npm cache, and synthetic-video export/full-decode checks. Automated tests do not establish new long-clip hardware acceptance.
 
 - [Architecture and script migration mapping](docs/ARCHITECTURE.md)
@@ -137,7 +138,7 @@ This project uses the [MIT License](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD
 
 面向 Agent 的 eufy 能力平台：把登录、设备发现、录像查询与导出封装成独立能力，逐步提供统一 CLI/API，再接入智能体和界面。
 
-**当前版本是可运行的迁移基础。** 已迁入登录、设备列表、事件录像页面与相关能力；连续历史回放仍为实验性。CLI、v1 API、后台任务、Agent 和动态界面尚未实现，对应工作已建立 GitHub Issues。
+**当前版本是可运行的迁移基础。** 已迁入登录、设备列表、事件录像页面与相关能力；连续历史回放仍为实验性。最小持久化任务模块已可供服务接入。CLI、v1 API、Agent 和动态界面尚未实现，对应工作已建立 GitHub Issues。
 
 ### 目前可以做什么
 
@@ -150,7 +151,8 @@ This project uses the [MIT License](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD
 | [capabilities/live](capabilities/live) | 实时视频能力归属 | 待封装、待实测 |
 | [api](api) | 原页面的登录与事件录像 HTTP 协议 | 已迁入 legacy 协议；不是 v1 Agent API |
 | [interface](interface) | 固定登录、设备、事件录像和播放器页面 | 可运行；Agent 侧栏和动态工作区待实现 |
-| [cli](cli) / [jobs](jobs) / [agent](agent) | 命令行、任务服务、工具编排的模块边界 | 目录与说明已建立，暂无运行实现 |
+| [jobs](jobs) | 持久化任务标识、状态、HomeBase 排队与独立产物目录 | Phase A 模块已通过离线测试；服务和录像接入、Phase B 恢复能力待完成 |
+| [cli](cli) / [agent](agent) | 命令行、工具编排的模块边界 | 目录与说明已建立，暂无运行实现 |
 | [adapters/eufy](adapters/eufy) | 业务能力访问协议库的统一入口 | 可独立构建 |
 
 “已验证迁入”指原型在当前账号或设备上完成过实际操作，迁移后通过离线回归测试，不表示所有型号都已验证。
@@ -207,7 +209,7 @@ capabilities/               按功能封装，可复用的业务能力
 adapters/eufy/              Mega/P2P 协议入口
 api/                       当前 legacy HTTP；后续 v1 API
 cli/                       后续命令行客户端
-jobs/                      后续常驻任务执行与状态
+jobs/                      Phase A 持久化任务执行与状态契约
 agent/                     后续工具定义与智能体编排
 interface/
   pages/                   固定功能页面
@@ -245,7 +247,7 @@ output/                    运行时导出文件，不提交 Git
 
 文档约定：根 README 使用中英文双语；其他项目文档（包括模块 README）统一使用英文。
 
-测试与能力、API、界面代码放在同一目录。`npm test` 不需要真实账号或 HomeBase；覆盖登录挑战、设备发现失败、查询分页限制、下载完成确认、连续帧时间、HTTP Range 和服务端口。
+测试与能力、API、界面、任务代码放在同一目录。任务测试覆盖持久化标识、排队、校验门槛，以及独立提交客户端退出后继续执行。`npm test` 不需要真实账号或 HomeBase；覆盖登录挑战、设备发现失败、查询分页限制、下载完成确认、连续帧时间、HTTP Range 和服务端口。
 本次迁移还做了独立审查、空 npm 缓存下的离线构建，以及使用合成视频的导出/完整解码检查。没有通过自动测试声称完成新的实机长片验收。
 
 - [架构与逐脚本迁移清单](docs/ARCHITECTURE.md)
