@@ -23,3 +23,5 @@ Exports are written to `output/` at the repository root. At startup, event expor
 `createServer({port, session, recordings, outputRoot})` supports dependency injection for tests; `port:0` uses an available port assigned by the operating system. Tests require neither an account nor a HomeBase.
 
 Continuous recording support belongs to `capabilities/recordings/continuous.cjs` and is not yet exposed through these HTTP routes. The future v1 API needs shared capability descriptions, structured errors, job IDs, and progress contracts for both the CLI and Agent.
+
+For localized interfaces, status payloads may include `messageI18n: {key, params}`, error responses may include `errorI18n`, and `diagnosticsI18n` entries align with `diagnostics`. These additive fields preserve the original `message`/`error` strings and data values. Unknown upstream errors have no translation metadata. See the [localization contract](../interface/i18n/README.md).

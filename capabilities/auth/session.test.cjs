@@ -95,3 +95,59 @@ test('expired sessions require login before making another inventory call', asyn
   await assert.rejects(session.refresh(), /登录已过期/);
   assert.equal(session.authenticated, false);
 });
+
+test('auth localization metadata follows verification and preserves legacy text', async () => {
+  const { session, api } = harness([26052, 26050, 0]);
+  assert.equal(session.state.messageI18n.key, 'service.auth.idle');
+  await session.login(credentials);
+  assert.equal(session.state.message, '验证码已发送，请输入最新收到的 eufy 邮件验证码。');
+  assert.equal(session.state.messageI18n.key, 'service.auth.codeSent');
+  await session.verify('wrong');
+  assert.equal(session.state.messageI18n.key, 'service.auth.codeIncorrect');
+  await session.verify('123456');
+  assert.deepEqual(session.state.messageI18n, { key: 'service.devices.loaded', params: { country: 'CA', count: 2 } });
+  api.hasValidSession = () => false;
+  await assert.rejects(session.refresh(), error => {
+    assert.equal(error.message, '登录已过期，请重新登录。');
+    assert.equal(error.i18n.key, 'service.auth.expired');
+    session.fail(error);
+    return true;
+  });
+  assert.equal(session.state.messageI18n.key, 'service.auth.expired');
+  session.fail(new Error('upstream-specific failure'));
+  assert.equal(session.state.message, 'upstream-specific failure');
+  assert.equal(Object.hasOwn(session.state, 'messageI18n'), false);
+});
+
+test('diagnostics metadata remains aligned and clears after retry without translating upstream data', async () => {
+  const { session, api } = harness();
+  api.getDevsListDecrypted = async () => ({ unexpected: [] });
+  await session.login(credentials);
+  assert.equal(session.state.diagnosticsI18n[0].key, 'service.devices.invalidInventory');
+  api.getDevsListDecrypted = async () => { throw new Error('upstream error 4404'); };
+  await session.refresh();
+  assert.deepEqual(session.state.diagnostics, ['upstream error 4404']);
+  assert.deepEqual(session.state.diagnosticsI18n, [null]);
+  api.getDevsListDecrypted = async () => ({ devices: [
+    { device_sn: 'MISSING' },
+    { device_sn: 'NAMED', device_name: '未命名设备', device_model: '未知型号' },
+  ] });
+  await session.refresh();
+  assert.deepEqual(session.state.diagnosticsI18n, []);
+  const [fallback, actual] = session.state.devices;
+  assert.equal(fallback.name, '未命名设备');
+  assert.equal(fallback.nameI18n.key, 'service.devices.unnamed');
+  assert.equal(fallback.modelI18n.key, 'service.devices.unknownModel');
+  assert.equal(actual.name, '未命名设备');
+  assert.equal(actual.nameI18n, undefined);
+  assert.equal(actual.modelI18n, undefined);
+});
+
+test('upstream login error codes are preserved in localization parameters', async () => {
+  const { session } = harness([1234]);
+  await assert.rejects(session.login(credentials), error => {
+    assert.match(error.message, /1234/);
+    assert.deepEqual(error.i18n, { key: 'service.auth.loginFailed', params: { code: 1234 } });
+    return true;
+  });
+});

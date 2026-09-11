@@ -1,10 +1,13 @@
 const { MegaHTTPApi, ResponseErrorCode: Code } = require('../../adapters/eufy');
 const { supportsEventRecordings } = require('../devices/recording-support.cjs');
+const { messageI18n, serviceError, setMessage } = require('../../api/messages.cjs');
 
 class LocalEufySession {
   constructor(createApi = options => new MegaHTTPApi(options)) {
     this.createApi = createApi;
     this.state = { phase: 'idle', message: '请使用加拿大（CA）地区登录你的 eufy 账号。', devices: [], diagnostics: [] };
+    this.state.messageI18n = messageI18n('service.auth.idle');
+    this.state.diagnosticsI18n = [];
     this.authenticated = false;
   }
 
@@ -13,6 +16,8 @@ class LocalEufySession {
     this.credentials = { email: email.trim(), password };
     this.captchaId = undefined;
     this.state = { phase: 'busy', message: '正在登录 eufy…', country: country.trim().toUpperCase(), devices: [], diagnostics: [] };
+    this.state.messageI18n = messageI18n('service.auth.signingIn');
+    this.state.diagnosticsI18n = [];
     this.api = this.createApi({ ab: this.state.country.toLowerCase(), phoneModel: 'Local Eufy Client' });
     await this.api.init();
     await this.api.estimateDomain();
@@ -21,25 +26,25 @@ class LocalEufySession {
 
   async verify(code) {
     const phase = this.state.phase;
-    if (!this.credentials || !['tfa', 'captcha'].includes(phase)) throw new Error('请先登录，再输入验证码。');
+    if (!this.credentials || !['tfa', 'captcha'].includes(phase)) throw serviceError('请先登录，再输入验证码。', 'service.auth.loginBeforeCode');
     await this.authenticate(phase === 'tfa' ? code : undefined,
       phase === 'captcha' ? { captchaId: this.captchaId, answer: code } : undefined);
   }
 
   async authenticate(verifyCode, captcha) {
     this.state.phase = 'busy';
-    this.state.message = '正在验证账号…';
+    setMessage(this.state, '正在验证账号…', messageI18n('service.auth.verifying'));
     const result = await this.api.login(this.credentials.email, this.credentials.password, verifyCode, captcha);
     if (result.code === Code.CODE_NEED_VERIFY_CODE || result.code === Code.CODE_VERIFY_CODE_EXPIRED) {
       const sent = await this.api.sendVerifyCode();
-      if (sent.code !== 0 && sent.code !== 200) throw new Error(`验证码发送失败（错误码 ${sent.code}），请稍后重新登录。`);
+      if (sent.code !== 0 && sent.code !== 200) throw serviceError(`验证码发送失败（错误码 ${sent.code}），请稍后重新登录。`, 'service.auth.codeSendFailed', { code: sent.code });
       this.state.phase = 'tfa';
-      this.state.message = '验证码已发送，请输入最新收到的 eufy 邮件验证码。';
+      setMessage(this.state, '验证码已发送，请输入最新收到的 eufy 邮件验证码。', messageI18n('service.auth.codeSent'));
       return;
     }
     if (result.code === Code.CODE_VERIFY_CODE_ERROR || result.code === Code.CODE_VERIFY_CODE_NONE_MATCH) {
       this.state.phase = 'tfa';
-      this.state.message = '验证码不正确，请重新输入最新收到的验证码。';
+      setMessage(this.state, '验证码不正确，请重新输入最新收到的验证码。', messageI18n('service.auth.codeIncorrect'));
       return;
     }
     if (result.code === Code.LOGIN_NEED_CAPTCHA || result.code === Code.LOGIN_CAPTCHA_ERROR) {
@@ -47,11 +52,11 @@ class LocalEufySession {
       this.captchaId = challenge.captcha_id;
       this.state.captcha = challenge.item.startsWith('data:') ? challenge.item : `data:image/png;base64,${challenge.item}`;
       this.state.phase = 'captcha';
-      this.state.message = '请输入图片中的验证码。';
+      setMessage(this.state, '请输入图片中的验证码。', messageI18n('service.auth.captchaRequired'));
       return;
     }
     if (result.code !== 0 || !this.api.hasValidSession()) {
-      throw new Error(`未能完成登录（错误码 ${result.code}），请检查账号信息后重试。`);
+      throw serviceError(`未能完成登录（错误码 ${result.code}），请检查账号信息后重试。`, 'service.auth.loginFailed', { code: result.code });
     }
     this.authenticated = true;
     this.credentials = undefined;
@@ -61,41 +66,50 @@ class LocalEufySession {
   }
 
   async refresh() {
-    if (!this.authenticated) throw new Error('请先完成登录。');
+    if (!this.authenticated) throw serviceError('请先完成登录。', 'service.auth.completeLogin');
     if (!this.api.hasValidSession()) {
       this.authenticated = false;
-      throw new Error('登录已过期，请重新登录。');
+      throw serviceError('登录已过期，请重新登录。', 'service.auth.expired');
     }
     this.state.phase = 'connected';
-    this.state.message = '账号已登录，正在读取设备…';
+    setMessage(this.state, '账号已登录，正在读取设备…', messageI18n('service.devices.loading'));
     this.state.diagnostics = [];
+    this.state.diagnosticsI18n = [];
     try {
       const inventory = await this.api.getDevsListDecrypted();
-      if (!inventory || !Array.isArray(inventory.devices)) throw new Error('设备列表格式与预期不符。');
+      if (!inventory || !Array.isArray(inventory.devices)) throw serviceError('设备列表格式与预期不符。', 'service.devices.invalidInventory');
       const devices = new Map();
       for (const raw of inventory.devices) {
-        if (!raw || typeof raw.device_sn !== 'string' || !raw.device_sn) throw new Error('设备列表缺少设备标识。');
+        if (!raw || typeof raw.device_sn !== 'string' || !raw.device_sn) throw serviceError('设备列表缺少设备标识。', 'service.devices.missingSerial');
         devices.set(raw.device_sn, {
           serial: raw.device_sn,
           name: typeof raw.device_name === 'string' && raw.device_name ? raw.device_name : '未命名设备',
           model: typeof raw.device_model === 'string' ? raw.device_model : '未知型号',
           capabilities: { eventRecordings: supportsEventRecordings(raw, inventory.devices) },
+          ...(!(typeof raw.device_name === 'string' && raw.device_name) ? { nameI18n: messageI18n('service.devices.unnamed') } : {}),
+          ...(typeof raw.device_model !== 'string' ? { modelI18n: messageI18n('service.devices.unknownModel') } : {}),
         });
       }
       this.state.devices = [...devices.values()];
-      this.state.message = devices.size
+      setMessage(this.state, devices.size
         ? `已登录（${this.state.country}），已从 eufy 新接口加载 ${devices.size} 台设备。`
-        : `已登录（${this.state.country}），eufy 新接口返回了空设备列表。`;
-      if (inventory.devices.length >= 100) this.state.diagnostics.push('设备数量达到本次请求上限，列表可能不完整。');
+        : `已登录（${this.state.country}），eufy 新接口返回了空设备列表。`,
+      messageI18n(devices.size ? 'service.devices.loaded' : 'service.devices.empty', { country: this.state.country, count: devices.size }));
+      if (inventory.devices.length >= 100) {
+        this.state.diagnostics.push('设备数量达到本次请求上限，列表可能不完整。');
+        this.state.diagnosticsI18n.push(messageI18n('service.devices.limitReached'));
+      }
     } catch (error) {
-      this.state.message = `账号已登录（${this.state.country}），但设备读取失败，可以重新读取设备。`;
+      setMessage(this.state, `账号已登录（${this.state.country}），但设备读取失败，可以重新读取设备。`, messageI18n('service.devices.loadFailed', { country: this.state.country }));
       this.state.diagnostics = [error.message];
+      this.state.diagnosticsI18n = [error.i18n || null];
     }
   }
 
   fail(error) {
     this.state.phase = 'error';
-    this.state.message = error instanceof Error ? error.message : '请求失败，请重试。';
+    setMessage(this.state, error instanceof Error ? error.message : '请求失败，请重试。',
+      error instanceof Error ? error.i18n : messageI18n('service.requestFailed'));
   }
 }
 
