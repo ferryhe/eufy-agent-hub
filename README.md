@@ -6,7 +6,7 @@
 
 An eufy capability platform for agents: account access, device discovery, recording queries, and exports are organized into reusable modules, with a shared CLI/API, agent integration, and interfaces planned on top.
 
-**This release is a runnable migration foundation.** Account access, device listing, event-recording pages, and their capabilities have been migrated. Continuous historical playback remains experimental. The minimum durable job module is available for service integration. CLI, v1 API, agent integration, and the dynamic interface are not implemented yet; GitHub Issues track that work.
+**This release includes a resident recording API.** Account access, device listing and event-recording pages remain available. The [v1 API](api/v1.md) connects the supported continuous recording path to durable jobs, full media validation and explicit complete/partial/failed results. CLI, agent integration and the dynamic interface remain tracked in GitHub Issues.
 
 ### Available capabilities
 
@@ -17,7 +17,7 @@ An eufy capability platform for agents: account access, device discovery, record
 | [capabilities/recordings](capabilities/recordings) | Event queries, downloads, MP4 conversion, and decode validation | Validated migration; requires FFmpeg |
 | Same directory: `continuous.cjs` / `mux.py` | Continuous ranges, playback by time, timestamped raw-frame capture | Experimental; short clip tested, long-clip completeness pending |
 | [capabilities/live](capabilities/live) | Ownership of live-video capabilities | Wrapping and hardware validation pending |
-| [api](api) | The original page's login and event-recording HTTP protocol | Legacy protocol migrated; not a v1 agent API |
+| [api](api) | Resident v1 recording jobs and the original page protocol | Device/range/job/artifact contract; legacy page preserved |
 | [interface](interface) | Fixed login, device, event-recording, and player page | Runnable; agent sidebar and dynamic workspace pending |
 | [jobs](jobs) | Durable job identity, state, per-HomeBase queue, and output ownership | Phase A module with offline tests; service/recording integration and Phase B recovery pending |
 | [cli](cli) / [agent](agent) | Command-line and tool-orchestration boundaries | Directories and documentation only; no runtime implementation |
@@ -76,7 +76,7 @@ Continuous capture currently uses the capability module directly, with no page b
 capabilities/                Reusable business capabilities
   auth/  devices/  recordings/  live/
 adapters/eufy/               Mega/P2P protocol entry point
-api/                        Legacy HTTP now; v1 API planned
+api/                        Resident recording v1 API and legacy page HTTP
 cli/                        Planned command-line client
 jobs/                       Phase A durable job execution and state contract
 agent/                      Planned tools and agent orchestration
@@ -139,7 +139,7 @@ This project uses the [MIT License](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD
 
 面向 Agent 的 eufy 能力平台：把登录、设备发现、录像查询与导出封装成独立能力，逐步提供统一 CLI/API，再接入智能体和界面。
 
-**当前版本是可运行的迁移基础。** 已迁入登录、设备列表、事件录像页面与相关能力；连续历史回放仍为实验性。最小持久化任务模块已可供服务接入。CLI、v1 API、Agent 和动态界面尚未实现，对应工作已建立 GitHub Issues。
+**当前版本已提供常驻录像 API。** 登录、设备列表与事件录像页面继续可用。[v1 API](api/v1.md) 将已支持的连续录像路径接入持久化任务和完整媒体校验，明确区分完整、部分与失败结果。CLI、Agent 和动态界面仍由 GitHub Issues 跟踪。
 
 ### 目前可以做什么
 
@@ -150,7 +150,7 @@ This project uses the [MIT License](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD
 | [capabilities/recordings](capabilities/recordings) | 事件查询、下载、MP4 转换及解码验证 | 已验证迁入；依赖 FFmpeg |
 | 同上 `continuous.cjs` / `mux.py` | 连续时段查询、按时间回放、带时间戳的原始帧捕获 | 实验性；短片实测，长片完整性待验收 |
 | [capabilities/live](capabilities/live) | 实时视频能力归属 | 待封装、待实测 |
-| [api](api) | 原页面的登录与事件录像 HTTP 协议 | 已迁入 legacy 协议；不是 v1 Agent API |
+| [api](api) | 常驻 v1 录像任务与原页面协议 | 设备/范围/任务/产物契约；保留旧页面 |
 | [interface](interface) | 固定登录、设备、事件录像和播放器页面 | 可运行；Agent 侧栏和动态工作区待实现 |
 | [jobs](jobs) | 持久化任务标识、状态、HomeBase 排队与独立产物目录 | Phase A 模块已通过离线测试；服务和录像接入、Phase B 恢复能力待完成 |
 | [cli](cli) / [agent](agent) | 命令行、工具编排的模块边界 | 目录与说明已建立，暂无运行实现 |
@@ -209,7 +209,7 @@ python -m pip install -r capabilities/recordings/requirements.txt
 capabilities/               按功能封装，可复用的业务能力
   auth/  devices/  recordings/  live/
 adapters/eufy/              Mega/P2P 协议入口
-api/                       当前 legacy HTTP；后续 v1 API
+api/                       常驻录像 v1 API 与旧页面 HTTP
 cli/                       后续命令行客户端
 jobs/                      Phase A 持久化任务执行与状态契约
 agent/                     后续工具定义与智能体编排

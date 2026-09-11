@@ -4,11 +4,16 @@
   "private": true,
   "description": "Capability modules, CLI/API foundations and interfaces for an agent-powered eufy app",
   "license": "MIT",
-  "engines": { "node": ">=24.0.0" },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "setup": "npm --prefix vendor/eufy-security-client ci",
     "build": "npm --prefix vendor/eufy-security-client run build:ts",
     "start": "node interface/server.cjs",
     "test": "node --test \"capabilities/**/*.test.cjs\" \"api/**/*.test.cjs\" \"interface/**/*.test.cjs\" \"jobs/**/*.test.cjs\""
+  },
+  "dependencies": {
+    "ajv": "8.20.0"
   }
 }

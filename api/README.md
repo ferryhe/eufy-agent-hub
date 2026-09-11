@@ -1,5 +1,7 @@
 # Local HTTP API
 
+The resident [recording API v1](v1.md) now provides the stable device → recording ranges → durable export job → status/artifact path for CLI and Agent clients. Its machine-checkable contract is served at `/api/v1/contract`. The routes below remain the existing page protocol.
+
 `legacy-recording-routes.cjs` migrates the original page protocol. These routes serve the fixed page and **are not a stable v1 Agent API**. Start the local-only service with `node interface/server.cjs`.
 
 | Method | Path | Purpose / request |
@@ -20,8 +22,8 @@ Asynchronous operations return `202 {ok:true}` to indicate acceptance; recording
 
 Exports are written to `output/` at the repository root. At startup, event export manifests in that directory are read to restore the list of playable files. Only registered exported files are accessible through the media route. This migration does not copy private recordings, accounts, or sessions from the original repository.
 
-`createServer({port, session, recordings, outputRoot})` supports dependency injection for tests; `port:0` uses an available port assigned by the operating system. Tests require neither an account nor a HomeBase.
+`createServer({port, session, recordings, outputRoot, exports, createRanges})` supports dependency injection for tests; `port:0` uses an available port assigned by the operating system. After closing the HTTP server, await `server.shutdown()` for resident export cleanup. Tests require neither an account nor a HomeBase.
 
-Continuous recording support belongs to `capabilities/recordings/continuous.cjs` and is not yet exposed through these HTTP routes. The future v1 API needs shared capability descriptions, structured errors, job IDs, and progress contracts for both the CLI and Agent.
+Continuous export is exposed through the separate `/api/v1` routes, using `capabilities/recordings/continuous-export.cjs` and persistent jobs. The legacy routes above retain their original event-recording behavior.
 
 For localized interfaces, status payloads may include `messageI18n: {key, params}`, error responses may include `errorI18n`, and `diagnosticsI18n` entries align with `diagnostics`. These additive fields preserve the original `message`/`error` strings and data values. Unknown upstream errors have no translation metadata. See the [localization contract](../interface/i18n/README.md).
