@@ -1,29 +1,29 @@
-# 账号与会话
+# Authentication and sessions
 
-从原项目 `scripts/local-eufy-session.cjs` 迁入 `session.cjs`。协议通过 `adapters/eufy` 接入，保留原有行为。
+`session.cjs` was migrated from `scripts/local-eufy-session.cjs` in the original project. It preserves the existing behavior and accesses the protocol through `adapters/eufy`.
 
-## 已有能力
+## Available capabilities
 
-- `LocalEufySession.login({ email, password, country })`：按地区选择 Mega 服务并登录。
-- `verify(code)`：提交图片验证码或邮件验证码，依据当前会话阶段选择。
-- `refresh()`：重新读取设备；设备查询失败保留登录和此前列表，并记录诊断。
-- `state`：提供阶段、提示、设备摘要、诊断，以及需要验证时的验证码图片。
-- `fail(error)`：由调用方把请求异常写入可展示状态；异步方法的异常仍需调用方捕获。
+- `LocalEufySession.login({ email, password, country })`: select the regional Mega service and sign in.
+- `verify(code)`: submit an image CAPTCHA answer or email verification code, according to the current session phase.
+- `refresh()`: reload devices; a device query failure preserves the login and previous list and records diagnostics.
+- `state`: expose the phase, message, device summaries, diagnostics, and a CAPTCHA image when required.
+- `fail(error)`: let the caller place a request error into displayable state; callers must still catch errors from asynchronous methods.
 
-`phase` 包含 `idle`、`busy`、`captcha`、`tfa`、`connected`、`error`。`connected` 表示账号登录成功，设备读取是否成功还须检查 `diagnostics`。
+`phase` can be `idle`, `busy`, `captcha`, `tfa`, `connected`, or `error`. `connected` means authentication succeeded; check `diagnostics` to determine whether device discovery also succeeded.
 
-## 成熟度与验证
+## Maturity and validation
 
-这是已使用的本地单账号登录流程：源项目在当前用户 CA 账号完成过登录和设备读取。本次迁移不重新登录、不复制会话或凭证。其他地区和账号未在此次迁移实测。
+This is an existing local, single-account login flow. The original project completed login and device discovery with the current user's CA account. The migration did not repeat login or copy sessions or credentials. Other accounts and regions were not tested against the service during this migration.
 
-保留 6 个离线测试，覆盖登录、验证码纠错、图片验证码后邮件验证、设备读取失败后重试、无效设备响应、会话过期。测试使用模拟服务，不能替代 eufy 在线验证。
+Six offline tests were retained. They cover login, correcting a verification code, email verification after an image CAPTCHA, retrying failed device discovery, invalid inventory responses, and session expiration. They use a mocked service and do not replace validation against eufy.
 
 ```sh
 node --test capabilities/auth/session.test.cjs
 ```
 
-## 当前边界
+## Current limitations
 
-会话只存在于进程内，重启需重新登录。未实现会话恢复、自动续期、登出入口、多账号隔离或同一账号的并发登录队列。收到过期提示后，由调用方引导重新登录。设备列表仍由 `session.refresh()` 读取，`capabilities/devices` 复用该实现。
+Sessions exist only in the current process; restarting requires signing in again. Session restoration, automatic renewal, a logout entry point, multiple-account isolation, and a queue for concurrent login attempts on one account are not implemented. Callers must prompt for a new login after expiration. Device discovery still runs through `session.refresh()`, which `capabilities/devices` reuses.
 
-后续范围见 [Issue 草案](../../docs/issues/auth-devices.md)。
+See the [issue drafts](../../docs/issues/auth-devices.md) for planned work.

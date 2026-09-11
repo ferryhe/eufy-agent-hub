@@ -1,18 +1,18 @@
-# 录像能力
+# Recording capabilities
 
-本目录从本地 eufy 原型迁入，协议依赖统一通过 `../../adapters/eufy`。
-调用者传入已登录的会话；模块不保存密码，不接管其他服务的登录状态。
+This directory was migrated from the local eufy prototype. All protocol dependencies go through `../../adapters/eufy`.
+Callers provide an authenticated session; these modules do not store passwords or take over another service's login state.
 
-| 文件 | 功能 | 成熟度 |
+| File | Function | Maturity |
 |---|---|---|
-| `events.cjs` | 事件日期索引、设备筛选、下载完成确认 | 已验证迁入；当前限同一局域网的 HomeBase 3 |
-| `export.cjs` | 将确认下载完成的原始流导出 MP4，并完整解码验证 | 已验证迁入；依赖 FFmpeg |
-| `continuous.cjs` | 6000 查询连续时段、6001 回放、保存带时间戳的原始帧 | 实验性；仅短片完成实机验证 |
-| `mux.py` | 使用逐帧时间戳生成 MPEG-TS | 实验性；依赖 Python 与 PyAV，尚未接入后台任务 |
+| `events.cjs` | Event date index, device filtering, confirmed download completion | Validated in the source project and migrated; currently limited to HomeBase 3 on the same LAN |
+| `export.cjs` | Export confirmed raw downloads to MP4 and verify by decoding the entire file | Validated in the source project and migrated; requires FFmpeg |
+| `continuous.cjs` | Query continuous ranges with 6000, play history with 6001, and save timestamped raw frames | Experimental; only a short clip has been validated on a real device |
+| `mux.py` | Generate MPEG-TS using individual frame timestamps | Experimental; requires Python and PyAV, and is not integrated with background jobs |
 
-## 事件录像
+## Event recordings
 
-在仓库根目录执行的示例；`session` 是通过 auth 能力获得的已登录会话。
+Run this example from the repository root. `session` is an authenticated session provided by the auth capability.
 
 ```javascript
 const path = require('node:path');
@@ -21,7 +21,7 @@ const { exportRecording } = require('./capabilities/recordings/export.cjs');
 const service = new LocalRecordings(session);
 try {
   const records = await service.listDay(cameraSerial, '2026-08-27');
-  if (!records.length) throw new Error('当天没有事件索引；这不代表没有连续录像。');
+  if (!records.length) throw new Error('No event index for this date; continuous recordings may still exist.');
   const directory = path.resolve('output', 'my-export');
   const download = await service.download(records[0].record_id, directory);
   const result = await exportRecording(download.prefix, path.join(directory, 'event.mp4'));
@@ -30,18 +30,18 @@ try {
 }
 ```
 
-输出目录由调用者指定，CLI/API 应选择本仓库 `output/` 下的目录。
-原始视频、音频和元数据会保留；收到设备完成通知且写入结束才登记下载成功。
-导出还需通过完整解码检查。事件下载目前有 90 秒超时；不要把事件列表当成连续回放时间轴。
+Callers choose the output directory; the CLI/API should use a directory beneath this repository's `output/`.
+Raw video, audio, and metadata are retained. A download is recorded as successful only after the device sends its completion notification and file writes finish.
+Exports must also pass a full decoding check. Event downloads currently time out after 90 seconds. An event list is not a continuous playback timeline.
 
-FFmpeg 优先使用环境变量 `EUFY_FFMPEG` 指定的可执行文件，否则从 `PATH` 查找 `ffmpeg`。
-缺少 FFmpeg 会返回明确的安装/配置提示，不依赖旧仓库的私有运行时。
-当前导出元数据时区仍为 `America/Toronto`，通用时区支持另行跟踪。
+FFmpeg uses the executable specified by `EUFY_FFMPEG`, falling back to `ffmpeg` on `PATH`.
+If FFmpeg is missing, the module returns an installation/configuration hint; it does not depend on the old repository's private runtime.
+Export metadata still uses `America/Toronto`; general time zone support is tracked separately.
 
-## 连续录像
+## Continuous recordings
 
-已获得 6000/6001 的真实调用和短片结果；不再依赖早期 1025/1026 的猜测。
-完整命令、调用方法和限制见 [CONTINUOUS_PLAYBACK.md](CONTINUOUS_PLAYBACK.md)。
-长片、中途断线、时间缺口、自动转换和任务恢复尚未完成验收，见 [Issue 草案](../../docs/issues/recordings.md)。
+Commands 6000/6001 have been independently called and used to obtain a short clip. This capability no longer relies on the earlier 1025/1026 guesses.
+See [CONTINUOUS_PLAYBACK.md](CONTINUOUS_PLAYBACK.md) for commands, usage, and limitations.
+Long recordings, interrupted connections, time gaps, automatic conversion, and task recovery have not completed acceptance validation. See the [issue drafts](../../docs/issues/recordings.md).
 
-测试：在仓库根目录执行 `node --test capabilities/recordings/*.test.cjs`，需先构建协议适配依赖。
+Tests: run `node --test capabilities/recordings/*.test.cjs` from the repository root after building the protocol adapter dependency.

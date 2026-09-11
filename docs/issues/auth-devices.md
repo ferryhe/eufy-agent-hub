@@ -1,47 +1,47 @@
-# Auth / Devices 待建 Issue
+# Auth and devices issue drafts
 
-以下为迁移时的缺口清单；不是已实现功能。由仓库维护者与其他目录任务去重后创建远端 Issue。
+The following gaps were identified during migration; they are not implemented features. These drafts were intended for repository maintainers to deduplicate against other module tasks before creating remote issues. See the [issue index](README.md) for the created work items.
 
-## [auth] 常驻服务的会话生命周期与重启恢复
+## [auth] Session lifecycle and restart recovery for the persistent service
 
-**已有证据：** 当前单账号登录、邮件/图片验证码和过期检测已经实现，有 6 个离线测试；会话仅存在内存，过期后要求重新登录。
+**Existing evidence:** Single-account login, email/image verification challenges and expiration detection are implemented, with six offline tests. Sessions exist only in memory, and expiration requires a new login.
 
-**范围：** 为 CLI、API 和后台任务提供共同的会话状态、登出和重启恢复；验证 Mega 是否允许恢复/刷新会话，不能恢复时明确进入需登录状态。默认继续支持单账号，不扩展多账号架构。
+**Scope:** Provide shared session status, logout and restart recovery for the CLI, API and background jobs. Verify whether Mega permits session recovery or refresh; enter an explicit login-required state when recovery is unavailable. Continue supporting a single account by default, without introducing a multi-account architecture.
 
-**验收：**
+**Acceptance criteria:**
 
-- CLI 与 API 使用同一账号会话，验证码挑战可从原登录流程继续完成。
-- 服务重启后能恢复仍有效的会话，或明确报告需要重新登录；不把过期会话显示为可用。
-- 登出后设备请求需重新登录，等待中的录像任务准确显示需要登录。
-- 模拟有效、过期、恢复失败和登出场景，补充至少一次真实账号验证记录。
+- The CLI and API use the same account session, and verification challenges can continue the original login flow.
+- After a service restart, recover a still-valid session or explicitly report that login is required. Never display an expired session as usable.
+- Device requests require a new login after logout, and waiting recording jobs accurately report that login is required.
+- Simulate valid, expired, recovery-failure and logout scenarios, and record at least one real-account validation.
 
-**依赖：** 常驻服务、后台任务状态设计，以及 Mega 会话恢复/刷新机制的验证。
+**Dependencies:** The persistent service, the background-job state model, and verification of Mega session recovery/refresh mechanisms.
 
-## [devices] 建立可供 Agent 查询的设备能力与连接信息
+## [devices] Expose device capabilities and connection information to the Agent
 
-**已有证据：** 当前 Mega 设备发现能列出 HomeBase 和摄像头，保留未知型号；对外摘要只有序列号、名称、型号。
+**Existing evidence:** Mega device discovery lists HomeBase stations and cameras while retaining unknown models. Public summaries currently contain only serial number, name and model.
 
-**范围：** 从已读取的设备资料中整理 HomeBase 关联、通道及可取得的固件/状态；按设备与固件记录各能力的验证级别，向 CLI/API/Agent 暴露查询入口。先覆盖当前使用设备；未知型号保留并明确标为未知，不猜测支持能力。
+**Scope:** Extract HomeBase relationships, channels and available firmware/status information from the device data already retrieved. Record capability verification levels by device and firmware, and expose query methods to the CLI/API/Agent. Cover the devices currently in use first. Retain unknown models and mark them as unknown instead of guessing their capabilities.
 
-**验收：**
+**Acceptance criteria:**
 
-- Agent 可查询一台设备支持哪些已验证功能，以及哪些只是协议库线索。
-- 已验证设备能关联到正确 HomeBase 和通道；缺失资料明确为空或未知。
-- API 返回稳定的数据结构，未知型号、未支持功能和离线设备均有可解释结果。
-- 为当前摄像头和 HomeBase 留下验证记录；测试包含未知型号与关联缺失。
+- The Agent can query which device functions are verified and which are only leads from the protocol library.
+- Verified devices map to the correct HomeBase and channel; missing information is explicitly null or unknown.
+- The API returns a stable data structure with understandable results for unknown models, unsupported features and offline devices.
+- Record validation for the current cameras and HomeBase; include tests for unknown models and missing relationships.
 
-**依赖：** auth 会话、协议适配器和 recordings/live 各能力的实际验证结果。
+**Dependencies:** The auth session, protocol adapter, and actual verification results from the recordings/live capabilities.
 
-## [devices] 验证 Mega 设备列表分页并返回完整性状态
+## [devices] Verify Mega device-list pagination and report completeness
 
-**已有证据：** 当前设备响应达到 100 条时仅提示可能不完整，尚未验证分页机制。
+**Existing evidence:** A response containing 100 devices currently produces only a possible-incompleteness warning. Pagination has not been verified.
 
-**范围：** 根据 Mega 文档或已授权账号的调用证据确认分页/续页方式；若接口没有分页，明确暴露完整性未知状态。不得把上限响应宣称为完整列表。
+**Scope:** Confirm pagination or continuation behavior using Mega documentation or request evidence from an authorized account. If the interface has no pagination, explicitly expose completeness as unknown. Do not claim that a response reaching the limit is complete.
 
-**验收：**
+**Acceptance criteria:**
 
-- 模拟多页响应时能合并去重，保留未知型号。
-- 分页中途失败时暴露失败和不完整状态，允许重试。
-- 记录使用的协议证据；无法证明分页存在时保留限制并返回结构化完整性状态。
+- Merge and deduplicate simulated multi-page responses while retaining unknown models.
+- Report failure and incompleteness when pagination fails midway, and allow a retry.
+- Record the protocol evidence used. When pagination cannot be established, retain the limitation and return structured completeness status.
 
-**依赖：** Mega 设备接口协议证据。
+**Dependencies:** Protocol evidence for the Mega device interface.

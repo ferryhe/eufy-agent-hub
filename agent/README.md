@@ -1,13 +1,13 @@
-# Agent（待实现）
+# Agent (Planned)
 
-此目录预留给结构化工具定义、工具适配和智能体编排。尚未安装 agent SDK、选择模型或启动监控。
+This directory is reserved for structured tool definitions, tool adapters, and Agent orchestration. No Agent SDK has been installed, no model has been selected, and no monitoring has been started.
 
-Agent 使用已有能力与任务 API 完成“找设备 → 查询录像 → 创建导出 → 跟进进度 → 返回文件”。设备 ID、可用范围、任务状态和产物均来自工具结果。
-工具不直接暴露未知的 P2P 命令编号，也不接收账号密码作为普通模型参数。
+The Agent will use available capabilities and job APIs to find devices, query recordings, create exports, track progress, and return files. Device IDs, available ranges, job states, and artifacts must come from tool results.
+Tools will not directly expose unknown P2P command numbers or accept account passwords as ordinary model parameters.
 
-首批工具：get_session_status、list_devices、get_device_capabilities、list_recording_ranges、create_recording_export、get_job、cancel_job、get_artifact。
-MCP 可以作为适配入口，但不取代常驻服务。CLI、网页和 agent 共用该服务。
+Initial tools: `get_session_status`, `list_devices`, `get_device_capabilities`, `list_recording_ranges`, `create_recording_export`, `get_job`, `cancel_job`, and `get_artifact`.
+MCP can provide an adapter entry point but does not replace the persistent service. The CLI, web interface, and Agent will share that service.
 
-首条验收：自然语言提出设备和时间范围后，产生真实导出任务，完成后返回可播放文件及实际覆盖范围；会话不可用时准确进入登录流程。
+First acceptance criterion: a natural-language request specifying a device and time range creates a real export job and returns a playable file with its actual coverage when complete. If the session is unavailable, the flow must correctly direct the user to login.
 
-实现进度见根目录 [README](../README.md) 的 Issues 表。
+See the Issues table in the root [README](../README.md) for implementation progress.

@@ -1,5 +1,5 @@
-# 固定页面
+# Fixed Pages
 
-`local-login.html` 已从旧项目迁移，提供账号登录、验证码、设备列表、Toronto 时间事件检索、下载和已保存录像播放。查询列表是事件片段，不代表连续录像覆盖。
+`local-login.html` was migrated from the old project. It provides account login, verification challenges, a device list, event search in Toronto time, downloads, and playback of saved recordings. Search results are event clips and do not establish continuous recording coverage.
 
-页面目前为单个 HTML 文件，尚未拆成共享组件。未来设备页、录像日历和任务页归入此目录。
+The page is currently a single HTML file and has not been split into shared components. Future device pages, recording calendars, and job pages belong in this directory.

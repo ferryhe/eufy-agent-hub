@@ -1,10 +1,10 @@
-# CLI（待实现）
+# CLI (Planned)
 
-此目录预留给常驻服务的命令行客户端，目前没有 `eufy` 可执行命令。不会为每条命令重新登录或独立连接 HomeBase。
+This directory is reserved for the persistent service's command-line client. There is currently no `eufy` executable. The client will not log in again or open an independent HomeBase connection for each command.
 
-第一版命令范围：auth status/login、devices list/capabilities、recordings ranges/export、jobs get/cancel、artifacts get。
-命令和 HTTP API 共享输入输出契约；`--json` 的 stdout 只输出结构化结果，进度写 stderr，失败使用稳定错误码和非零退出码。
+Initial command scope: `auth status/login`, `devices list/capabilities`, `recordings ranges/export`, `jobs get/cancel`, and `artifacts get`.
+Commands and the HTTP API will share input and output contracts. With `--json`, stdout will contain only structured results, progress will go to stderr, and failures will use stable error codes and nonzero exit codes.
 
-长时导出立即返回 jobId，可选择等待；终端退出不取消服务中的任务。依赖版本化 API 和 jobs。
+Long exports will immediately return a `jobId`, with an option to wait. Exiting the terminal will not cancel jobs in the service. This work depends on the versioned API and jobs layer.
 
-实现进度见根目录 [README](../README.md) 的 Issues 表。
+See the Issues table in the root [README](../README.md) for implementation progress.

@@ -1,37 +1,37 @@
-# 平台能力待建 Issues
+# Platform capability issue drafts
 
-## [api] 建立常驻服务与 v1 结构化 API
+## [api] Build a persistent service and structured v1 API
 
-已有：内存会话与 legacy 登录、事件查询、下载路由。
-缺口：当前接口面向单页原型，不具备稳定的 agent/CLI 契约。
-范围：复用 capabilities 建立会话、设备、能力、录像范围、导出任务与产物入口；保持界面和业务分离。
-验收：提供可校验的请求响应定义；未登录、不支持、离线、没有录像分别可识别；错误码稳定；创建长任务立即返回 jobId；保留可用登录流程；集成测试从登录状态到任务和文件访问。
-依赖：jobs 基本契约。API可先用任务适配接口推进，不等待UI或Agent。
+Existing: In-memory sessions and legacy login, event-query and download routes.
+Gap: The current interface serves a single-page prototype and has no stable Agent/CLI contract.
+Scope: Reuse capabilities to expose sessions, devices, capabilities, recording ranges, export jobs and artifacts, keeping interface and business logic separate.
+Acceptance: Provide request/response definitions that can be validated; distinguish login-required, unsupported, offline and no-recording outcomes; use stable error codes; immediately return a `jobId` for long jobs; preserve working login flows; cover session status through jobs and file access with integration tests.
+Dependencies: The basic jobs contract. API development can proceed through a job adapter without waiting for the UI or Agent.
 
-## [jobs] 持久化导出任务、排队、取消与显式重试
+## [jobs] Persist export jobs, queue operations, support cancellation and explicit retries
 
-已有：legacy busy 标志和同步捕获函数；没有公共任务实现。
-范围：常驻服务内任务存储、状态转换、进度及同一HomeBase的媒体调度。
-验收：重复requestId返回原任务；CLI/agent退出不停止任务；取消停止接收和转换并记录状态；重启后恢复可恢复状态或明确标记中断；失败阶段和部分产物可诊断；校验失败不能报告完成。自动测试覆盖状态转换、重复提交、重启、取消和冲突排队。
-依赖：先定义最小任务契约；录像工作器可随后接入。
+Existing: A legacy busy flag and capture functions whose callers wait for completion; no shared job implementation.
+Scope: Job storage, state transitions, progress and media scheduling for each HomeBase within the persistent service.
+Acceptance: A repeated `requestId` returns the original job; CLI/Agent exit does not stop jobs; cancellation stops reception and conversion and records the resulting state; restart recovers recoverable state or explicitly marks interruption; failed stages and partial artifacts are diagnosable; failed validation never reports completion. Automated tests cover state transitions, repeated submissions, restart, cancellation and queuing of conflicting operations.
+Dependencies: Define a minimal job contract first; recording workers can be connected afterward.
 
-## [cli] 提供共享 API 的命令行客户端
+## [cli] Provide a command-line client for the shared API
 
-已有：capability CJS调用和本地页面；没有已安装的CLI命令。
-范围：auth、devices、recordings、jobs、artifacts 命令，只调用同一常驻服务。
-验收：help说明真实支持的命令；--json输出可机器读取、进度走stderr；错误退出码可判断；交互式完成登录挑战；导出返回jobId且支持等待；服务不可用时有明确提示；CLI与HTTP验收同一组设备和任务结果。
-依赖：v1 API 和 jobs。
+Existing: CommonJS capability calls and a local page; no installed CLI commands.
+Scope: `auth`, `devices`, `recordings`, `jobs` and `artifacts` commands that call the same persistent service.
+Acceptance: Help documents only supported commands; `--json` is machine-readable, with progress on stderr; failures have meaningful exit codes; login challenges can be completed interactively; exports return `jobId` and support waiting; service unavailability produces a clear message; CLI and HTTP validation use the same device and job results.
+Dependencies: The v1 API and jobs.
 
-## [agent] 接入能力工具并完成自然语言录像导出
+## [agent] Integrate capability tools and complete natural-language recording exports
 
-已有：capabilities与工具清单设计；没有运行中的agent。
-范围：封装会话、设备、能力、录像范围、导出任务与产物工具，接入一种选定的agent运行时；不在本Issue实现视频内容理解或持续监控。
-验收：用户表达设备、日期和时段后，agent使用唯一设备ID和服务规范化时间完成真实导出；可查进度并返回视频；未知设备、重名、未登录、缺录像和失败任务得到正确处理；不会重复创建同一任务或把返回码0当作文件完成；离线工具测试与一次真实端到端记录。
-依赖：v1 API、设备能力、jobs和连续导出完成路径。
+Existing: Capabilities and a planned tool inventory; no running Agent.
+Scope: Wrap session, device, capability, recording-range, export-job and artifact tools, and integrate one selected Agent runtime. Video-content understanding and continuous monitoring are outside this issue.
+Acceptance: Given a device, date and interval, the Agent completes a real export using a unique device ID and service-normalized time; progress can be queried and video returned; unknown devices, duplicate names, missing login, absent recordings and failed jobs are handled correctly; it neither duplicates the same job nor treats return code 0 as a completed file; provide offline tool tests and one real end-to-end validation record.
+Dependencies: The v1 API, device capabilities, jobs and the complete continuous-export path.
 
-## [live] 封装并验证实时视频能力
+## [live] Wrap and verify live-video capabilities
 
-已有：vendor内含startLivestream/stopLivestream及talkback协议实现，hub没有稳定调用模块。
-范围：优先实现当前摄像头的实时视频start/stop、媒体输出和生命周期；对讲/RTSP按实际支持结果开放。
-验收：可用设备产生能解码的媒体并正常停止；未支持/离线明确返回；实时与历史操作冲突可预测且不抢占另一任务；记录设备型号、固件与验证结果；补充流失败和清理测试。
-依赖：设备能力契约与媒体连接管理。
+Existing: The vendor library includes `startLivestream`/`stopLivestream` and talkback protocol implementations, but the hub has no stable capability module.
+Scope: Prioritize live-video start/stop, media output and lifecycle for the current cameras; expose talkback/RTSP according to verified support.
+Acceptance: Available devices produce decodable media and stop normally; unsupported/offline outcomes are explicit; conflicts between live and historical operations are predictable and do not preempt another job; record device models, firmware and validation results; add stream-failure and cleanup tests.
+Dependencies: The device-capability contract and media-connection management.

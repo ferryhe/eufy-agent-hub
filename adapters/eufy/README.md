@@ -1,9 +1,9 @@
-# eufy 协议适配
+# eufy protocol adapter
 
-`index.cjs` 是 capabilities 访问协议库的统一入口。已迁移的能力不依赖旧项目目录、全局调试对象或 Android 模拟器。
+`index.cjs` is the shared protocol entry point for capabilities. Migrated capabilities do not depend on the old project directory, global debugging objects, or an Android emulator.
 
-当前依赖 `vendor/eufy-security-client` 中有来源记录的 MIT 源码快照。保留快照是因为连续回放 6000/6001、事件查询数量与下载确认依赖尚未发布的本地改动，不能直接替换成同版本 npm 包。
+The adapter currently uses the MIT-licensed source snapshot in `vendor/eufy-security-client`, with its origin documented. The snapshot is necessary because continuous playback commands 6000/6001, event query limits, and download confirmation depend on unpublished local changes. The npm package with the same version cannot replace it directly.
 
-构建：在仓库根运行 `npm run setup`、`npm run build`。详细来源见 [PROVENANCE.md](../../vendor/eufy-security-client/PROVENANCE.md)。
+Build from the repository root with `npm run setup` followed by `npm run build`. See [PROVENANCE.md](../../vendor/eufy-security-client/PROVENANCE.md) for source details.
 
-这里只提供迁移实际使用的类与枚举。已有上游设备控制方法不代表已作为本项目稳定能力开放；按型号整理能力矩阵后再扩充。
+This adapter exposes only the classes and enums used by the migration. Existing upstream device control methods are not automatically stable capabilities of this project; the adapter will expand after capabilities are organized and validated by device model.

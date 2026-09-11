@@ -1,3 +1,3 @@
-# Agent 界面（待实现）
+# Agent Interface (Planned)
 
-未来存放对话入口、可展开侧栏、参数补充及工具调用状态。此目录属于界面层；工具执行和任务编排归根目录 `agent/` 与能力层。当前未接入模型，不存在可运行的对话侧栏。
+This directory will contain the conversation entry point, expandable sidebar, parameter clarification, and tool invocation status. It belongs to the interface layer; tool execution and job orchestration belong to the root `agent/` directory and the capability layer. No model is connected yet, and there is no working conversation sidebar.

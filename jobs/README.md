@@ -1,10 +1,10 @@
-# 后台任务（待实现）
+# Background Jobs (Planned)
 
-当前 legacy API 只有单进程内存中的 busy 状态，不具备持久化任务、jobId、重启恢复或取消接口。本目录没有可运行的任务服务。
+The current legacy API only has an in-memory `busy` state within one process. It has no persistent jobs, `jobId`, restart recovery, or cancellation endpoint. This directory does not contain a runnable job service.
 
-后续服务应管理 queued/running/validating/completed/failed/cancelled 状态，以及录像接收、封装转换、解码校验三个阶段。
-同一 HomeBase 的媒体操作由服务排队；重复 requestId 返回同一任务。重启后如无法安全续传，应明确标记中断并提供显式重试，不能静默重复导出。
+The future service should manage `queued`, `running`, `validating`, `completed`, `failed`, and `cancelled` states, along with three processing stages: recording reception, container conversion, and decode validation.
+The service will queue media operations for the same HomeBase, and repeated `requestId` values will return the same job. If an operation cannot safely resume after a restart, the service must explicitly mark it as interrupted and offer an explicit retry instead of silently duplicating the export.
 
-完成结果记录请求范围、实际首尾帧、覆盖是否已验证、文件地址及校验结果。终端或 agent 轮次结束不应停止后台任务。
+Completed results will record the requested range, actual first and last frames, whether coverage has been verified, the file location, and validation results. Ending a terminal session or Agent turn must not stop background jobs.
 
-实现进度见根目录 [README](../README.md) 的 Issues 表。
+See the Issues table in the root [README](../README.md) for implementation progress.

@@ -1,3 +1,3 @@
-# 共享组件（待实现）
+# Shared Components (Planned)
 
-未来存放固定页面与 Agent 工作区共用的设备卡片、播放器、时间轴、片段列表和任务进度卡。当前页面仍内嵌 HTML/CSS/JavaScript，此目录不含已实现的组件库。
+This directory will contain device cards, players, timelines, clip lists, and job progress cards shared by fixed pages and the Agent workspace. The current page still embeds its HTML, CSS, and JavaScript; this directory does not contain an implemented component library.

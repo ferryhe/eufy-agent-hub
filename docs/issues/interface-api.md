@@ -1,26 +1,26 @@
-# 界面与 API 的迁移和 Issue 草案
+# Interface and API migration notes and issue drafts
 
-已迁移：固定登录/设备/事件录像页面，本地 HTTP 路由，事件下载与 MP4 Range 播放；替换为能力目录依赖，输出落在新仓库 `output/`。服务工厂支持非自动监听、端口配置和关闭时清理录像连接。Toronto 日期/夏令时与媒体范围测试已迁移，增加无账号的真实 HTTP 烟测。
+Migrated: the fixed login/device/event-recording page, local HTTP routes, event downloads and MP4 Range playback. Dependencies now point to capability modules, and outputs go to the new repository's `output/` directory. The server factory supports creation without listening, configurable ports, and recording-connection cleanup on close. Toronto date/DST and media-range tests were migrated, and a real HTTP smoke test requiring no account was added.
 
-未迁移为成品的部分：Agent 侧栏、动态工作区、共享组件仅建立目录说明；尚无 v1 Agent API。以下由主任务统一创建 Issues，避免重复。
+Not delivered as finished features: the Agent sidebar, dynamic workspace and shared components have only directory documentation, and there is no v1 Agent API. These drafts were consolidated by the main migration task to avoid duplicate issues. See the [issue index](README.md) for the created work items.
 
-## API：建立供 CLI 与 Agent 使用的 v1 能力和任务协议
+## API: Define a v1 capability and job protocol for the CLI and Agent
 
-- 证据：`api/legacy-recording-routes.cjs` 已可调用事件查询和下载，但采用全局 busy + 状态轮询，没有独立任务 ID；连续回放仅存在能力层。
-- 缺口：能力发现、结构化参数/错误、任务提交/查询/取消和连续录像接口。
-- 依赖：`jobs/` 的持久任务模型，以及连续录像完整性验证。
-- 验收：发布参数与响应文档；CLI 和 Agent 使用同一协议；每次提交返回任务 ID；可查询并区分成功/失败/取消；返回可访问的输出和真实覆盖区间；现有登录及事件导出仍可工作。
+- Evidence: `api/legacy-recording-routes.cjs` supports event queries and downloads, but uses a global busy flag and status polling without individual job IDs. Continuous playback exists only in the capability layer.
+- Gaps: Capability discovery, structured parameters/errors, job submission/query/cancellation, and continuous-recording endpoints.
+- Dependencies: The persistent job model in `jobs/` and continuous-recording completeness validation.
+- Acceptance: Publish parameter and response documentation; the CLI and Agent use the same protocol; every submission returns a job ID; callers can query and distinguish success, failure and cancellation; responses include accessible outputs and actual coverage intervals; existing login and event exports continue working.
 
-## Interface：固定录像页与 Agent 侧栏共用结果组件
+## Interface: Share result components between the fixed recording page and Agent sidebar
 
-- 证据：`interface/pages/local-login.html` 是已迁移固定页面；其余界面目录只有归属说明。
-- 缺口：组件化设备卡片、时间轴、播放器、任务卡，及对话侧栏。
-- 依赖：v1 API 和根目录 Agent 工具层。
-- 验收：保留直接登录与检索操作；一次自然语言录像请求在侧栏展示解释、主区显示时间轴/播放器/任务卡；组件数据来自 API，失败与待补参数明确可见；用户可切换固定浏览与 Agent 操作。
+- Evidence: `interface/pages/local-login.html` is the migrated fixed page; other interface directories contain only responsibility descriptions.
+- Gaps: Reusable device cards, timeline, player, job cards and conversation sidebar.
+- Dependencies: The v1 API and the repository's Agent tool layer.
+- Acceptance: Preserve direct login and search operations; a natural-language recording request displays an explanation in the sidebar and a timeline/player/job card in the main area; component data comes from the API, with visible failures and missing parameters; users can switch between fixed browsing and Agent operations.
 
-## Interface：实现结构化动态工作区与结果固定
+## Interface: Implement a structured dynamic workspace and pinned results
 
-- 证据：`interface/workspace/` 已确立归属但没有渲染实现。
-- 缺口：结构化展示协议、注册组件渲染、结果固定与布局恢复。
-- 依赖：共享组件和 v1 稳定对象标识。
-- 验收：Agent 可组合至少设备列表/时间轴/播放器/任务卡；固定结果刷新后保留并重新从 API 加载状态；未知组件类型显示可理解的回退结果；固定页面与工作区共用操作行为。
+- Evidence: `interface/workspace/` has a defined responsibility but no rendering implementation.
+- Gaps: A structured presentation protocol, registered-component rendering, pinned results and layout restoration.
+- Dependencies: Shared components and stable v1 object identifiers.
+- Acceptance: The Agent can combine at least device lists, timelines, players and job cards; pinned results survive a refresh and reload their state from the API; unknown component types show an understandable fallback; fixed pages and the workspace share operation behavior.

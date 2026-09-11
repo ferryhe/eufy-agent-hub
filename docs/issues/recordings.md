@@ -1,56 +1,60 @@
-# 录像能力后续 Issues
+# Recording capability follow-up issues
 
-本文件记录迁移后尚未完成的功能，供仓库维护者创建远端 Issues；草案不代表已验收。
+This file records features unfinished at migration time as drafts for repository maintainers. Drafts do not imply acceptance. See the [issue index](README.md) for the created remote work items.
 
-## 连续录像：完成长时段导出和完整性验收
+## Continuous recording: Complete long-duration export and completeness validation
 
-**已有证据**：HomeBase 3 T8030 / T8600 上 6000 时段查询、6001 回放和约 20 秒原始流提取已独立调用成功；短片完整解码通过。新仓库保留该代码和离线测试。
+**Existing evidence:** On HomeBase 3 T8030 / T8600, independent calls to the 6000 range query, 6001 playback and approximately 20 seconds of raw-stream capture succeeded. The short clip passed full decoding. The new repository retains this code and offline tests.
 
-**缺口/范围**：`continuous.cjs` 当前仅确认收到结束边界，不能证明中间无缺口；首帧从首个关键帧开始，跨多个相邻录像范围不支持。尚未验证完整 20 分钟直接提取。
+**Gaps/scope:** `continuous.cjs` currently confirms only that the end boundary was received; it cannot prove the absence of gaps within the interval. Capture begins at the first keyframe, and spanning several adjacent recording ranges is unsupported. A complete direct 20-minute export has not been validated.
 
-**验收条件**：
-- 对一段仍存在的连续 20 分钟录像实机导出，记录请求时区、时间范围、实际首尾帧时间和丢失区间。
-- 解码全片成功；如缺帧、时间跳跃或只得到部分时段，返回部分结果与明确状态，不报告完整成功。
-- 覆盖多个相邻范围、范围有间隙、没有录像、设备断线和命令拒绝的自动化测试。
+**Acceptance criteria:**
 
-**依赖**：已登录会话、局域网可用 HomeBase 3、用户指定且仍保留的录像；协议适配器 6000/6001 支持。无需删除设备录像。
+- Export a still-available continuous 20-minute recording from a real device, recording the requested time zone/range, actual first/last frame times and missing intervals.
+- Decode the entire file successfully. If frames are missing, timestamps jump or only part of the interval is available, return a partial result with explicit status rather than reporting complete success.
+- Add automated coverage for adjacent ranges, gaps between ranges, no recordings, device disconnection and command rejection.
 
-## 连续录像：把捕获和封装接入导出任务
+**Dependencies:** An authenticated session, a HomeBase 3 available on the LAN, and user-selected recordings that are still retained; protocol-adapter support for 6000/6001. Deleting device recordings is unnecessary.
 
-**已有证据**：`captureRange` 产生帧与时间戳索引，`mux.py` 可生成 `timed.ts`；转换 MP4 和解码验证仍是手工步骤。
+## Continuous recording: Connect capture and muxing to export jobs
 
-**缺口/范围**：建立连续导出的完整服务调用，依序执行捕获、保留时间戳的封装、MP4 转换和完整解码，给 CLI/API/Agent 使用；不在本 Issue 实现 UI。
+**Existing evidence:** `captureRange` produces frames and a timestamp index, and `mux.py` can generate `timed.ts`. MP4 conversion and decoding validation remain manual steps.
 
-**验收条件**：
-- 一次任务调用返回可播放 MP4、实际覆盖范围及进度。
-- PyAV/FFmpeg 不存在时返回可诊断错误；任何阶段失败均保留诊断状态，不登记成功文件。
-- 输出全部写入本仓库 `output/` 下的任务目录；重复任务不会覆盖已有捕获。
-- 测试取消、断线和进程重启场景，与公共 jobs 能力约定部分文件和恢复方式。
+**Gaps/scope:** Build a complete continuous-export service call that runs capture, timestamp-preserving muxing, MP4 conversion and full decoding in order, for use by the CLI/API/Agent. UI implementation is outside this issue.
 
-**依赖**：公共 jobs 能力；上项完整性判定；Python/PyAV 和 FFmpeg 的可配置运行时。
+**Acceptance criteria:**
 
-## 录像时间：移除单一 Toronto 时区假设
+- One job invocation provides a playable MP4, actual coverage and progress.
+- Missing PyAV/FFmpeg produces a diagnosable error. Failure at any stage preserves diagnostic status and never registers a successful file.
+- All outputs go to job directories under this repository's `output/`; repeated jobs do not overwrite existing captures.
+- Test cancellation, disconnection and process restart, agreeing with the shared jobs capability on partial-file handling and recovery behavior.
 
-**已有证据**：当前事件入口的 Toronto 时间解析处理夏令时；事件导出元数据仍硬编码 `America/Toronto`。连续回放使用 Unix 秒。
+**Dependencies:** The shared jobs capability; completeness assessment from the preceding issue; configurable Python/PyAV and FFmpeg runtimes.
 
-**缺口/范围**：统一日期查询、CLI/API 请求、Agent 工具与导出元数据的时区契约。
+## Recording time: Remove the single-Toronto-time-zone assumption
 
-**验收条件**：
-- 支持调用者明确提供 IANA 时区，默认值可配置并在响应中展示。
-- 不存在/重复的本地时间不能静默选错；跨午夜范围有明确支持或明确拒绝。
-- 至少测试 Toronto 夏冬时间、夏令时切换及另一个时区；导出文件中的时区与请求一致。
+**Existing evidence:** Toronto time parsing in the current event entry point handles daylight saving time. Event-export metadata still hardcodes `America/Toronto`. Continuous playback uses Unix seconds.
 
-**依赖**：API 时间窗口解析与 CLI/Agent 输入契约；迁入的事件查询和导出能力。
+**Gaps/scope:** Unify the time-zone contract for date queries, CLI/API requests, Agent tools and export metadata.
 
-## 连续回放：验证并封装暂停、恢复和倍速
+**Acceptance criteria:**
 
-**已有证据**：Android 运行时代码包含 6001 cmd 1 暂停、cmd 2 恢复和 play_speed；目前仅开始/停止完成电脑实测。
+- Allow callers to explicitly supply an IANA time zone, with a configurable default shown in responses.
+- Never silently choose an incorrect interpretation of nonexistent or repeated local times. Explicitly support or reject cross-midnight intervals.
+- Test at least Toronto summer/winter times, DST transitions and one other time zone; exported time-zone metadata matches the request.
 
-**缺口/范围**：在测试设备实测后再开放回放控制；未验证参数不作为可用能力暴露给 Agent。
+**Dependencies:** API time-window parsing and CLI/Agent input contracts; the migrated event-query and export capabilities.
 
-**验收条件**：
-- 验证暂停/恢复命令返回和媒体时间戳行为，确认不会误操作其他通道。
-- 测试设备允许的倍速集合，不猜测支持范围；能力查询明确标注设备与验证状态。
-- 非活动会话、失效连接和命令拒绝得到明确错误。
+## Continuous playback: Verify and expose pause, resume and playback speed
 
-**依赖**：连续回放短片/长片验收与设备能力查询契约。
+**Existing evidence:** Android runtime code contains 6001 `cmd:1` for pause, `cmd:2` for resume, and `play_speed`. Only start/stop have been tested from the computer.
+
+**Gaps/scope:** Expose playback controls only after real-device verification. Do not expose unverified parameters to the Agent as usable capabilities.
+
+**Acceptance criteria:**
+
+- Verify pause/resume command responses and media timestamp behavior, ensuring other channels are unaffected.
+- Test the device's allowed playback speeds rather than guessing the supported set; capability queries clearly identify the device and verification status.
+- Return explicit errors for inactive sessions, lost connections and command rejection.
+
+**Dependencies:** Short/long continuous-playback validation and the device-capability query contract.

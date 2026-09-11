@@ -1,32 +1,32 @@
-# 迁移验收记录
+# Migration acceptance record
 
-日期：2026-09-11。
+Date: 2026-09-11.
 
-迁移按 auth/devices、recordings、interface/API 三个范围分工完成，随后由未实现对应模块的代理独立审核，主代理统一核对、修复和汇总。
-检查范围限于此次能力迁移、独立运行、文档准确性和功能回归，不把整个上游项目的所有设备功能视为本次验收范围。
+Migration was split into auth/devices, recordings, and interface/API work. Agents who had not implemented the corresponding modules then reviewed them independently, and the primary agent checked, corrected, and consolidated the results.
+Review was limited to this capability migration, independent operation, documentation accuracy, and functional regressions. It did not attempt to validate every device feature in the upstream project.
 
-## 已检查
+## Checks completed
 
-- 原有成熟脚本均有明确归属，逐文件对应见 [ARCHITECTURE.md](ARCHITECTURE.md)。
-- 协议来源、版本、许可证及本地补丁已记录；没有对旧工作区的代码路径依赖。
-- 根目录安装、协议构建和 17 项离线测试通过。
-- 安装依赖后，在全新 npm cache 下使用离线模式构建成功；4 个必要的 proto/crt 资源与源文件一致。
-- HTTP 服务支持默认会话、随机端口、登录前状态、固定页面和媒体 Range；测试不登录真实账号。
-- 子进程带残留 UDP 句柄时，独立服务的 SIGINT/SIGTERM 都能正常退出。
-- 使用临时合成视频与显式 FFmpeg 路径验证了事件 MP4 导出和完整解码；没有使用私人录像。
-- auth/devices、录像能力及界面分别标注迁移可用、实验性或待实现；14 个后续 Issues 已创建并核对链接。
-- 新仓库没有复制旧账号会话、Android 安装包、模拟器、抓包或录像文件；旧工作区保留。
+- Each mature original script has an explicit destination; see the file mapping in [ARCHITECTURE.md](ARCHITECTURE.md).
+- Protocol origin, version, license, and local patches are documented; no code paths depend on the old workspace.
+- Installation from the repository root, protocol build, and 17 offline tests passed.
+- After installing dependencies, an offline build with a fresh npm cache passed. All four required proto/crt resources matched the sources.
+- HTTP tests cover the default session, dynamic ports, pre-login status, the fixed page, and media Range responses without signing into a real account.
+- With a retained UDP handle in a child process, the standalone service exits normally on both SIGINT and SIGTERM.
+- Temporary synthetic video and an explicit FFmpeg path were used to validate event MP4 export and full decoding. No private footage was used.
+- Auth/devices, recording capabilities, and interface modules are labeled migrated, experimental, or planned as appropriate. Fourteen follow-up Issues were created and their links checked.
+- Old account sessions, Android packages, emulators, packet captures, and recording files were not copied into the repository. The old workspace remains available.
 
-## 审核发现与处理
+## Findings and fixes
 
-1. 原构建脚本通过未声明的 `npx copyfiles` 复制资源，本机缓存掩盖了依赖问题。已改用 Node 内置文件操作，空缓存离线构建复验通过。
-2. 页面入口迁移后仅关闭 HTTP，底层残留 UDP 句柄可能使进程不退出。独立运行入口现于 HTTP 关闭回调中退出；模块工厂保持不退出调用进程，补充子进程回归测试。
+1. The original build copied assets through an undeclared `npx copyfiles` dependency, hidden by the machine's npm cache. It now uses Node's built-in filesystem operations, and the offline build passed with an empty cache.
+2. The migrated entry point initially closed only HTTP, allowing retained protocol UDP handles to keep the process alive. The standalone entry point now exits from the HTTP close callback. The module factory does not exit its caller's process, and a child-process regression test covers shutdown.
 
-两项发现均已解决，独立审核无剩余迁移阻塞项。
+Both findings were resolved. Independent review found no remaining migration blockers.
 
-## 验收边界
+## Acceptance boundaries
 
-本次没有重新登录或操作用户设备，没有完成新的连续 20 分钟实机验收，没有实现 CLI、v1 API、持久任务或 Agent。
-这些是已创建的后续工作，不能因为目录已存在就视为完成。上游源码中的其他设备能力也没有在此次迁移中获得实机支持承诺。
+This migration did not sign into or operate the user's devices, complete a new continuous 20-minute hardware acceptance test, or implement CLI, v1 API, persistent jobs, or an agent.
+These remain tracked follow-up work. The existence of their directories does not mean they are complete. Other device capabilities in the upstream source did not gain hardware support guarantees through this migration.
 
-GitHub Actions 使用 Node 24 运行安装、构建和测试；远端状态以对应提交的实际检查结果为准。
+GitHub Actions installs, builds, and tests with Node 24. Consult the actual checks on the relevant commit for remote CI status.

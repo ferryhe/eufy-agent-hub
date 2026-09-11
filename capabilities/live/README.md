@@ -1,8 +1,9 @@
-# 实时视频（待封装、待验证）
+# Live video: wrapping and validation pending
 
-协议源码中已有实时视频和对讲实现，但本目录尚未提供稳定的能力接口，也没有在新客户端中逐设备验证。
+The protocol source already contains live video and talkback implementations. This directory does not yet provide a stable capability interface, and the new client has not validated these features on each device.
 
-后续需要封装 start/stop、媒体消费、连接清理和错误结果。先针对当前 HomeBase 3 与摄像头验证，只有设备支持时才开放对讲或 RTSP。
-实时视频与历史回放共享 HomeBase 媒体资源，需与 jobs/连接管理约定冲突处理，不能无提示抢占活动回放。
+Planned work includes start/stop operations, media consumption, connection cleanup, and error results. Validation will begin with the current HomeBase 3 and cameras; talkback and RTSP will be exposed only when supported by the device.
 
-实现进度见根目录 [README](../../README.md) 的 Issues 表。
+Live video and historical playback share HomeBase media resources. Conflict handling must be coordinated with jobs and connection management, without silently taking over active playback.
+
+See the Issues table in the root [README](../../README.md) for implementation tracking.
