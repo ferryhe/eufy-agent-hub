@@ -64,3 +64,19 @@ test('one missing packet in a stable 20fps stream is not hidden by the absolute 
   assert.equal(result.streams.video.gapLimitMs,75);
   assert.equal(result.streams.video.gaps[0].deltaMs,100);
 });
+
+test('isolated short timestamp deltas do not classify ordinary video and audio cadence as gaps', () => {
+  const info = capture();
+  // Sanitized timing shape from the hardware capture: video typically 67 ms with
+  // a 39 ms outlier; audio typically 79 ms with a 1 ms outlier. Real gaps remain.
+  info.frames = [0,67,134,173,240,307,374,574,641,708,775,842,909,976]
+    .map((offset,i)=>({kind:'video',timestamp:100000+offset,keyFrame:i===0,length:5}));
+  info.frames.push(...[0,79,158,159,238,317,396,556,635,714,793,872,951]
+    .map(offset=>({kind:'audio',timestamp:100000+offset,length:5})));
+  const result = assessCompleteness(info,{decode:decoded});
+  assert.equal(result.streams.video.gapLimitMs,100);
+  assert.equal(result.streams.audio.gapLimitMs,100);
+  assert.deepEqual(result.streams.video.gaps,[{beginMs:100374,endMs:100574,deltaMs:200}]);
+  assert.deepEqual(result.streams.audio.gaps,[{beginMs:100396,endMs:100556,deltaMs:160}]);
+  assert.equal(result.status,'partial');
+});

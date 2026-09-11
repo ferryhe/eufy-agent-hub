@@ -33,9 +33,14 @@ function assessCompleteness(capture, {decode = {status:'not_run',full:false}} = 
   for (const kind of ['video','audio']) {
     const frames = capture.frames.filter(frame=>frame.kind === kind);
     const timestamps = frames.map(frame=>frame.timestamp);
-    const positiveDeltas = timestamps.slice(1).map((timestamp,i)=>timestamp-timestamps[i]).filter(delta=>Number.isFinite(delta) && delta > 0);
-    const smallestDelta = positiveDeltas.length ? positiveDeltas.reduce((smallest,delta)=>Math.min(smallest,delta)) : null;
-    const gapLimitMs = smallestDelta === null ? MAX_FRAME_DELTA_MS : Math.min(MAX_FRAME_DELTA_MS,smallestDelta*1.5);
+    const positiveDeltas = timestamps.slice(1).map((timestamp,i)=>timestamp-timestamps[i])
+      .filter(delta=>Number.isFinite(delta) && delta > 0).sort((a,b)=>a-b);
+    const middle = Math.floor(positiveDeltas.length / 2);
+    // A single short interval is not the cadence; use the median without relaxing
+    // the absolute gap ceiling or the stable-cadence dropped-packet check.
+    const medianDelta = positiveDeltas.length
+      ? (positiveDeltas[middle] + positiveDeltas[Math.floor((positiveDeltas.length-1)/2)]) / 2 : null;
+    const gapLimitMs = medianDelta === null ? MAX_FRAME_DELTA_MS : Math.min(MAX_FRAME_DELTA_MS,medianDelta*1.5);
     const gaps = [], discontinuities = [];
     for (let i=0; i<timestamps.length; i++) {
       const current = timestamps[i], previous = timestamps[i-1];
@@ -75,7 +80,7 @@ function assessCompleteness(capture, {decode = {status:'not_run',full:false}} = 
   else if (!(decode.videoFrames >= video.length && decode.videoFrames > 0) || !(decode.durationMs >= endMs-beginMs-MAX_FRAME_DELTA_MS))
     add('decoded_coverage_short');
   return {status:!usable ? 'failed' : reasons.length ? 'partial' : 'complete',
-    ruleVersion:1,maxFrameDeltaMs:MAX_FRAME_DELTA_MS,requested:{beginMs,endMs},
+    ruleVersion:2,maxFrameDeltaMs:MAX_FRAME_DELTA_MS,requested:{beginMs,endMs},
     streams,rangeGaps,reasons,decode};
 }
 
