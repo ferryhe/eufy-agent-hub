@@ -6,7 +6,7 @@
 
 An eufy capability platform for agents: account access, device discovery, recording queries, and exports are organized into reusable modules, with a shared CLI/API, agent integration, and interfaces planned on top.
 
-**This release includes a resident recording API.** Account access, device listing and event-recording pages remain available. The [v1 API](api/v1.md) connects the supported continuous recording path to durable jobs, full media validation and explicit complete/partial/failed results. CLI, agent integration and the dynamic interface remain tracked in GitHub Issues.
+**This release includes a resident recording API.** Account access, device listing and event-recording pages remain available. The [v1 API](api/v1.md) connects the supported continuous recording path to durable jobs, full media validation and explicit complete/partial/failed results. The [CLI](cli/README.md) uses that same resident API for authentication, devices, continuous recording jobs and artifact downloads. Agent integration and the dynamic interface remain tracked in GitHub Issues.
 
 ### Available capabilities
 
@@ -20,7 +20,8 @@ An eufy capability platform for agents: account access, device discovery, record
 | [api](api) | Resident v1 recording jobs and the original page protocol | Device/range/job/artifact contract; legacy page preserved |
 | [interface](interface) | Fixed login, device, event-recording, and player page | Runnable; agent sidebar and dynamic workspace pending |
 | [jobs](jobs) | Durable job identity, state, per-HomeBase queue, and output ownership | Phase A module with offline tests; service/recording integration and Phase B recovery pending |
-| [cli](cli) / [agent](agent) | Command-line and tool-orchestration boundaries | Directories and documentation only; no runtime implementation |
+| [cli](cli) | HTTP command-line client for the resident service | Runnable auth, devices, ranges/exports, jobs and artifacts |
+| [agent](agent) | Tool-orchestration boundary | Directory and documentation only; no runtime implementation |
 | [adapters/eufy](adapters/eufy) | Shared entry point to the protocol library | Builds independently |
 
 “Validated migration” means the prototype performed real operations on the current account or device and passed offline regression tests after migration. It does not mean every device model has been validated.
@@ -52,6 +53,18 @@ npm start
 
 Then open `http://127.0.0.1:3188/`. The service listens on loopback only; its HTTP factory also supports ephemeral ports for tests.
 
+#### Command-line client
+
+In another terminal, use the same running service:
+
+```sh
+node cli/eufy.cjs help
+node cli/eufy.cjs auth login
+node cli/eufy.cjs --json devices list
+```
+
+Install the executable with `npm install --global .`, then use `eufy`. Select another resident with `--url http://127.0.0.1:3188`. Export returns `job.jobId` immediately; `jobs get`, `jobs wait` and `artifacts list/get` follow that durable job. JSON results preserve the shared API's time, capability and completeness fields. See the [CLI command and exit-code guide](cli/README.md) for login challenges and the full recording workflow.
+
 #### Video dependencies
 
 Event export requires **FFmpeg**. Add it to `PATH` or specify its executable:
@@ -68,7 +81,7 @@ Only the experimental continuous-recording muxer requires Python/PyAV:
 python -m pip install -r capabilities/recordings/requirements.txt
 ```
 
-Continuous capture currently uses the capability module directly, with no page button or CLI command. See [continuous playback](capabilities/recordings/CONTINUOUS_PLAYBACK.md) for examples, observed messages, and limitations.
+Continuous export is available through the resident API and CLI; the fixed page has no continuous-export button. See [continuous playback](capabilities/recordings/CONTINUOUS_PLAYBACK.md) for examples, observed messages, and limitations.
 
 ### Layout and target architecture
 
@@ -77,7 +90,7 @@ capabilities/                Reusable business capabilities
   auth/  devices/  recordings/  live/
 adapters/eufy/               Mega/P2P protocol entry point
 api/                        Resident recording v1 API and legacy page HTTP
-cli/                        Planned command-line client
+cli/                        HTTP client for the resident v1 service
 jobs/                       Phase A durable job execution and state contract
 agent/                      Planned tools and agent orchestration
 interface/
@@ -110,13 +123,13 @@ Continuous monitoring, natural-language execution, and video-content recognition
 | agent | [#12 Tool integration and natural-language export](https://github.com/ferryhe/eufy-agent-hub/issues/12) |
 | interface | [#13 Fixed pages and agent sidebar](https://github.com/ferryhe/eufy-agent-hub/issues/13), [#14 Dynamic workspace](https://github.com/ferryhe/eufy-agent-hub/issues/14) |
 
-Each item records evidence, gaps, acceptance criteria, and dependencies. Start with the job contract and v1 API while validating long continuous clips, then add CLI and agent integration before expanding the two interface modes.
+Each item records evidence, gaps, acceptance criteria, and dependencies. Start with the job contract and v1 API while validating long continuous clips, then add agent integration before expanding the two interface modes.
 
 ### Development and validation
 
 Documentation convention: this root README is bilingual (English and Chinese); all other project documentation, including module READMEs, is written in English.
 
-Tests live alongside capabilities, API, interface, and jobs code. Job tests cover durable identity, queuing, validation gates, and execution after a separate submitting client exits. `npm test` does not require a real account or HomeBase. It covers login challenges, device-discovery failures, query limits, download-completion confirmation, continuous frame timestamps, HTTP Range, and service ports.
+Tests live alongside capabilities, API, CLI, interface, and jobs code. Job tests cover durable identity, queuing, validation gates, and execution after a separate submitting client exits. `npm test` does not require a real account or HomeBase. It covers login challenges, device-discovery failures, query limits, download-completion confirmation, continuous frame timestamps, HTTP Range, and service ports.
 Migration also received independent review, an offline build with an empty npm cache, and synthetic-video export/full-decode checks. Automated tests do not establish new long-clip hardware acceptance.
 
 - [Architecture and script migration mapping](docs/ARCHITECTURE.md)
@@ -139,7 +152,7 @@ This project uses the [MIT License](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD
 
 面向 Agent 的 eufy 能力平台：把登录、设备发现、录像查询与导出封装成独立能力，逐步提供统一 CLI/API，再接入智能体和界面。
 
-**当前版本已提供常驻录像 API。** 登录、设备列表与事件录像页面继续可用。[v1 API](api/v1.md) 将已支持的连续录像路径接入持久化任务和完整媒体校验，明确区分完整、部分与失败结果。CLI、Agent 和动态界面仍由 GitHub Issues 跟踪。
+**当前版本已提供常驻录像 API。** 登录、设备列表与事件录像页面继续可用。[v1 API](api/v1.md) 将已支持的连续录像路径接入持久化任务和完整媒体校验，明确区分完整、部分与失败结果。[CLI](cli/README.md) 已通过同一常驻 API 提供登录、设备、连续录像任务和产物下载。Agent 和动态界面仍由 GitHub Issues 跟踪。
 
 ### 目前可以做什么
 
@@ -153,7 +166,8 @@ This project uses the [MIT License](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD
 | [api](api) | 常驻 v1 录像任务与原页面协议 | 设备/范围/任务/产物契约；保留旧页面 |
 | [interface](interface) | 固定登录、设备、事件录像和播放器页面 | 可运行；Agent 侧栏和动态工作区待实现 |
 | [jobs](jobs) | 持久化任务标识、状态、HomeBase 排队与独立产物目录 | Phase A 模块已通过离线测试；服务和录像接入、Phase B 恢复能力待完成 |
-| [cli](cli) / [agent](agent) | 命令行、工具编排的模块边界 | 目录与说明已建立，暂无运行实现 |
+| [cli](cli) | 常驻服务的 HTTP 命令行客户端 | 可运行登录、设备、录像范围/导出、任务与产物命令 |
+| [agent](agent) | 工具编排的模块边界 | 目录与说明已建立，暂无运行实现 |
 | [adapters/eufy](adapters/eufy) | 业务能力访问协议库的统一入口 | 可独立构建 |
 
 “已验证迁入”指原型在当前账号或设备上完成过实际操作，迁移后通过离线回归测试，不表示所有型号都已验证。
@@ -185,6 +199,18 @@ npm start
 
 此时打开 `http://127.0.0.1:3188/`。服务默认仅监听本机，HTTP 工厂也支持随机端口供测试使用。
 
+#### 命令行客户端
+
+在另一个终端使用同一个正在运行的服务：
+
+```sh
+node cli/eufy.cjs help
+node cli/eufy.cjs auth login
+node cli/eufy.cjs --json devices list
+```
+
+执行 `npm install --global .` 安装后可直接使用 `eufy`。用 `--url http://127.0.0.1:3188` 选择其他常驻服务。导出立即返回 `job.jobId`，再用 `jobs get`、`jobs wait` 和 `artifacts list/get` 查看任务和下载产物。JSON 结果保留统一 API 的时间、能力和完整性字段。登录挑战、完整录像流程及退出码见 [CLI 使用说明](cli/README.md)。
+
 #### 视频依赖
 
 事件导出需要 **FFmpeg**。将它加入 `PATH`，或配置可执行文件：
@@ -201,7 +227,7 @@ npm start
 python -m pip install -r capabilities/recordings/requirements.txt
 ```
 
-连续捕获目前通过能力模块调用，没有网页按钮或 CLI 命令；调用示例、真实报文及限制见 [连续回放说明](capabilities/recordings/CONTINUOUS_PLAYBACK.md)。
+连续导出已可通过常驻 API 和 CLI 调用，固定页面暂无连续导出按钮；调用示例、真实报文及限制见 [连续回放说明](capabilities/recordings/CONTINUOUS_PLAYBACK.md)。
 
 ### 目录与目标架构
 
@@ -210,7 +236,7 @@ capabilities/               按功能封装，可复用的业务能力
   auth/  devices/  recordings/  live/
 adapters/eufy/              Mega/P2P 协议入口
 api/                       常驻录像 v1 API 与旧页面 HTTP
-cli/                       后续命令行客户端
+cli/                       常驻 v1 服务的 HTTP 客户端
 jobs/                      Phase A 持久化任务执行与状态契约
 agent/                     后续工具定义与智能体编排
 interface/
@@ -243,13 +269,13 @@ output/                    运行时导出文件，不提交 Git
 | agent | [#12 工具接入与自然语言导出](https://github.com/ferryhe/eufy-agent-hub/issues/12) |
 | interface | [#13 固定页面与 Agent 侧栏](https://github.com/ferryhe/eufy-agent-hub/issues/13)、[#14 动态工作区](https://github.com/ferryhe/eufy-agent-hub/issues/14) |
 
-每项包含已有证据、缺口、验收条件和依赖。建议先推进任务契约与 v1 API，同时完成连续长片验证，再接 CLI 和 Agent，最后完善两种交互界面。
+每项包含已有证据、缺口、验收条件和依赖。建议先推进任务契约与 v1 API，同时完成连续长片验证，再接 Agent，最后完善两种交互界面。
 
 ### 开发与验证
 
 文档约定：根 README 使用中英文双语；其他项目文档（包括模块 README）统一使用英文。
 
-测试与能力、API、界面、任务代码放在同一目录。任务测试覆盖持久化标识、排队、校验门槛，以及独立提交客户端退出后继续执行。`npm test` 不需要真实账号或 HomeBase；覆盖登录挑战、设备发现失败、查询分页限制、下载完成确认、连续帧时间、HTTP Range 和服务端口。
+测试与能力、API、CLI、界面、任务代码放在同一目录。任务测试覆盖持久化标识、排队、校验门槛，以及独立提交客户端退出后继续执行。`npm test` 不需要真实账号或 HomeBase；覆盖登录挑战、设备发现失败、查询分页限制、下载完成确认、连续帧时间、HTTP Range 和服务端口。
 本次迁移还做了独立审查、空 npm 缓存下的离线构建，以及使用合成视频的导出/完整解码检查。没有通过自动测试声称完成新的实机长片验收。
 
 - [架构与逐脚本迁移清单](docs/ARCHITECTURE.md)
