@@ -15,8 +15,8 @@ const safeError = error => statuses[error?.code] ? error : failure('CONTROL_SEND
 // A resident control session owns its connection until awaited cleanup completes.
 // No credentials, file paths, payloads or frame buffers are included in views.
 class PlaybackSessions {
-  constructor({ session, resolveDevice, createConnection = () => new LocalContinuousRecordings(session) }) {
-    Object.assign(this, { session, resolveDevice, createConnection, current: null, operation: null, stopping: false });
+  constructor({ session, resolveDevice, acquireMedia, createConnection = () => new LocalContinuousRecordings(session) }) {
+    Object.assign(this, { session, resolveDevice, acquireMedia, createConnection, current: null, operation: null, stopping: false });
   }
   isBusy() { return Boolean(this.operation || (this.current && !this.current.closed)); }
   get(id) {
@@ -141,6 +141,7 @@ class PlaybackSessions {
         controls, api, begin, end, speed, closed: false, operations: [],
         channelChecks: { queryMatched: 0, queryRejected: 0, commandMatched: 0, commandRejected: 0, mediaMatched: 0, mediaRejected: 0 } };
       try {
+        c.release = this.acquireMedia?.(c.scope.homeBase.serial);
         try { c.connection = this.createConnection(); await c.connection.connect(serial); }
         catch { throw failure('CONTROL_CONNECTION_LOST'); }
         c.p2p = c.connection.station.p2pSession;
@@ -243,7 +244,7 @@ class PlaybackSessions {
           if (p2p.isConnected()) throw failure('CONTROL_CLEANUP_FAILED'); }
         finally { p2p.close = originalClose; if (c.originalEndStream) p2p.endStream = c.originalEndStream; }
       } else await c.connection?.close();
-      c.closed = true; c.state = c.error ? 'failed' : 'closed';
+      c.closed = true; c.state = c.error ? 'failed' : 'closed'; c.release?.();
     })().catch(() => { c.error = failure('CONTROL_CLEANUP_FAILED'); c.state = 'failed'; throw c.error; });
     return c.cleanup;
   }

@@ -111,11 +111,12 @@ function createServer(options = {}) {
     capabilityRecordsPath: options.capabilityRecordsPath ?? process.env.EUFY_CAPABILITY_RECORDS_PATH,
     deviceRepository: options.deviceRepository,
     playback: options.playback,
+    live: options.live,
   });
   const isBusy = () => busy || recordingRoutes.state.busy || v1.isBusy();
   const agentRoutes = installAgentRoutes(server, { getOrigin, ...options.agent });
   let shutdown;
-  server.shutdown = () => shutdown ||= agentRoutes.shutdown().then(() => v1.shutdown()).finally(() => {
+  server.shutdown = () => shutdown ||= agentRoutes.shutdown().then(() => v1.shutdown()).then(() => {
     recordingRoutes.recordings.close();
     session.close?.();
   });
@@ -136,10 +137,11 @@ if (require.main === module) {
   const stop = () => {
     if (stopping) return;
     stopping = true;
-    server.close(async () => {
-      try { await server.shutdown(); process.exit(0); }
-      catch (error) { console.error(error); process.exit(1); }
-    });
+    // Live media responses are long lived. Begin owned cleanup while HTTP drains,
+    // otherwise waiting for server.close first would deadlock those responses.
+    const closed = new Promise(resolve => server.close(resolve));
+    server.shutdown().then(() => closed).then(() => process.exit(0))
+      .catch(error => { console.error(error); process.exit(1); });
   };
   // Keep the owner visible while draining; SDK signal cleanup defers to it.
   process.on('SIGINT', stop);

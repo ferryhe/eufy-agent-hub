@@ -28,3 +28,5 @@ Choose **Browse recordings** for the existing login and event search/download fl
 The page defaults to the browser's preferred language, with English fallback. English/Chinese preferences are remembered locally. Fixed event searches retain their explicit `America/Toronto` behavior. Agent requests pass caller times unchanged to service normalization and display the service's effective timezone. A separate response-language preference changes explanations without rewriting names, times or earlier messages. Both modes use the [localization contract](i18n/README.md).
 
 See the [API documentation](../api/README.md) for the current request protocol.
+
+Live video uses the resident [v1 live-session contract](../capabilities/live/README.md). Embedded hosts must begin `server.shutdown()` while HTTP closes: an active media response needs owned cleanup before HTTP can drain. Await both operations before exiting.

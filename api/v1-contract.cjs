@@ -18,7 +18,10 @@ const errorCodes = ['UNAUTHENTICATED', 'UNSUPPORTED_DEVICE', 'DEVICE_UNAVAILABLE
   'INTERNAL_ERROR', 'PARTIAL_RECORDING', 'EXPORT_FAILED', 'JOB_CANCELLED', 'JOB_INTERRUPTED', 'LOGIN_REQUIRED', 'CAPABILITY_RECORDS_UNAVAILABLE',
   'PLAYBACK_SESSION_NOT_FOUND', 'CONTROL_NOT_VERIFIED', 'CONTROL_INACTIVE', 'CONTROL_SCOPE_CHANGED', 'CONTROL_CONTEXT_UNAVAILABLE',
   'CONTROL_CONNECTION_LOST', 'CONTROL_REJECTED', 'CONTROL_RESPONSE_INVALID', 'CONTROL_SEND_FAILED', 'CONTROL_TIMEOUT',
-  'CONTROL_STARTUP_TIMEOUT', 'CONTROL_MEDIA_TIMEOUT', 'CONTROL_CLEANUP_FAILED', 'PAUSE_MEDIA_ADVANCED'];
+  'CONTROL_STARTUP_TIMEOUT', 'CONTROL_MEDIA_TIMEOUT', 'CONTROL_CLEANUP_FAILED', 'PAUSE_MEDIA_ADVANCED', 'LIVE_SESSION_NOT_FOUND', 'LIVE_UNSUPPORTED', 'LIVE_NOT_VERIFIED', 'LIVE_REQUEST_CONFLICT',
+  'LIVE_INACTIVE', 'LIVE_MEDIA_CLAIMED', 'LIVE_SCOPE_CHANGED', 'DEVICE_OFFLINE', 'LIVE_CONNECTION_LOST',
+  'LIVE_COMMAND_REJECTED', 'LIVE_COMMAND_TIMEOUT', 'LIVE_MEDIA_TIMEOUT', 'LIVE_CLIENT_TIMEOUT',
+  'LIVE_DECODER_ERROR', 'LIVE_RUNTIME_ERROR', 'LIVE_CLEANUP_FAILED'];
 const error = object({ code: { enum: errorCodes }, message: string });
 const discovery = object({ status: { enum: ['not_requested', 'succeeded', 'failed'] },
   completeness: { enum: ['unknown', 'incomplete'] }, pagination: { const: 'unverified' },
@@ -62,6 +65,15 @@ const playback = object({ sessionId: nonempty,
   channelChecks: object(Object.fromEntries(['queryMatched', 'queryRejected', 'commandMatched', 'commandRejected', 'mediaMatched', 'mediaRejected']
     .map(name => [name, { type: 'integer', minimum: 0 }]))), channelIsolation: { const: 'unverified' },
 });
+const live = object({ sessionId: nonempty, requestId: nonempty, serial: nonempty,
+  state: { enum: ['starting', 'streaming', 'stopping', 'stopped', 'failed'] },
+  verificationScope: { anyOf: [deviceSchemas.scope, { type: 'null' }] }, capabilityStatus: { enum: STATUSES },
+  createdAt: string, updatedAt: string, startedAt: nullableString, stoppedAt: nullableString, attachDeadline: nullableString,
+  mediaUrl: string, media: object({ container: { const: 'fragmented_mp4' }, videoCodec: { const: 'h264' }, audio: { const: false },
+    inputCodec: { enum: ['h264', 'hevc', null] }, bytesReceived: { type: 'integer', minimum: 0 } }),
+  cleanupComplete: { type: 'boolean' }, stopConfirmed: { type: 'boolean' }, diagnostics: array({ type: 'object' }),
+  error: { anyOf: [error, { type: 'null' }] },
+});
 const contract = {
   $schema: 'http://json-schema.org/draft-07/schema#', $id: 'urn:eufy-agent-hub:api:v1',
   title: 'Eufy resident recording API v1',
@@ -76,6 +88,8 @@ const contract = {
     export: object({ requestId: nonempty, serial: nonempty, ...time }, ['requestId', 'serial', 'day', 'start', 'end']),
     playbackStart: object({ serial: nonempty, ...time, speed: { type: 'number' } }, ['serial', 'day', 'start', 'end']),
     playbackResponse: object({ playback }),
+    liveStart: object({ serial: nonempty, requestId: nonempty, allowUnverified: { type: 'boolean' } }, ['serial', 'requestId']),
+    liveResponse: object({ live }),
     normalizedWindow: window, device, discovery, artifact, job,
     error: object({ error, discovery }, ['error']),
     session: object({ authenticated: { type: 'boolean' }, phase: string, captcha: nullableString, busy: { type: 'boolean' }, loginUrl: { const: '/api/v1/session/login' }, verificationUrl: { const: '/api/v1/session/verify' }, logoutUrl: { const: '/api/v1/session/logout' } }),
@@ -90,7 +104,7 @@ const contract = {
 };
 const ajv = new Ajv({ strict: false });
 ajv.addSchema(contract);
-const validators = Object.fromEntries(['identity', 'retry', 'window', 'export', 'playbackStart', 'login', 'verification', 'empty'].map(name =>
+const validators = Object.fromEntries(['identity', 'retry', 'window', 'export', 'playbackStart', 'liveStart', 'login', 'verification', 'empty'].map(name =>
   [name, ajv.getSchema(`${contract.$id}#/definitions/${name}`)]));
 function validateRequest(name, data) {
   const validate = validators[name];

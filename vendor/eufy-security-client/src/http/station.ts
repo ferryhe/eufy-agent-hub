@@ -1016,6 +1016,17 @@ export class Station extends TypedEmitter<StationEvents> {
     return this.p2pSession.isConnected();
   }
 
+  /** Dispose a dedicated station and await release of the underlying UDP handle. */
+  public async destroy(): Promise<void> {
+    this.terminating = true;
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = undefined;
+    }
+    await this.p2pSession.destroy();
+    this.removeAllListeners();
+  }
+
   public close(): void {
     this.terminating = true;
     if (this.reconnectTimeout) {

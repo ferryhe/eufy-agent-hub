@@ -60,6 +60,23 @@ class JobService {
     return [...this.#jobs.values()].sort((a, b) => a.sequence - b.sequence).map(copy);
   }
 
+  // Interactive media uses the same HomeBase slot as queued jobs. It rejects
+  // accepted history (including recovery) and never jumps ahead of the FIFO.
+  acquireMedia(homeBaseId) {
+    requireString(homeBaseId, 'homeBaseId');
+    if (this.#fatalError) throw this.#fatalError;
+    if (this.#active.has(homeBaseId) || this.list().some(job => job.homeBaseId === homeBaseId && job.state === 'queued'))
+      throw Object.assign(new Error('HomeBase media is already owned.'), { code: 'SERVICE_BUSY', status: 409 });
+    let complete, released = false;
+    const lease = new Promise(resolve => { complete = resolve; });
+    this.#active.set(homeBaseId, lease);
+    return () => {
+      if (released) return;
+      released = true;
+      this.#active.delete(homeBaseId); complete(); this.#schedule();
+    };
+  }
+
   submit({ requestId, homeBaseId, input = {} }) {
     requireString(requestId, 'requestId');
     const existing = this.#requests.get(requestId);

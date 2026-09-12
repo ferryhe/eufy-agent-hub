@@ -22,8 +22,10 @@ Asynchronous operations return `202 {ok:true}` to indicate acceptance; recording
 
 Exports are written to `output/` at the repository root. At startup, event export manifests in that directory are read to restore the list of playable files. Only registered exported files are accessible through the media route. This migration does not copy private recordings, accounts, or sessions from the original repository.
 
-`createServer({port, session, recordings, outputRoot, exports, createRanges})` supports dependency injection for tests; `port:0` uses an available port assigned by the operating system. After closing the HTTP server, await `server.shutdown()` for resident export cleanup. Tests require neither an account nor a HomeBase.
+`createServer({port, session, recordings, outputRoot, exports, createRanges})` supports dependency injection for tests; `port:0` uses an available port assigned by the operating system. Begin `server.shutdown()` while closing the HTTP server, then await both for resident export cleanup. Tests require neither an account nor a HomeBase.
 
 Continuous export is exposed through the separate `/api/v1` routes, using `capabilities/recordings/continuous-export.cjs` and persistent jobs. The legacy routes above retain their original event-recording behavior.
 
 For localized interfaces, status payloads may include `messageI18n: {key, params}`, error responses may include `errorI18n`, and `diagnosticsI18n` entries align with `diagnostics`. These additive fields preserve the original `message`/`error` strings and data values. Unknown upstream errors have no translation metadata. See the [localization contract](../interface/i18n/README.md).
+
+Live video uses the resident [v1 live-session contract](../capabilities/live/README.md). Embedded hosts must begin `server.shutdown()` while HTTP closes: an active media response needs owned cleanup before HTTP can drain. Await both operations before exiting.

@@ -4308,6 +4308,51 @@ export class P2PClientProtocol extends TypedEmitter<P2PClientProtocolEvents> {
     return P2PDataType.UNKNOWN;
   }
 
+  private destruction?: Promise<void>;
+
+  /** Permanently dispose a dedicated connection; unlike close(), never rebuild its socket. */
+  public destroy(): Promise<void> {
+    return this.destruction ||= (async () => {
+      this.terminating = true;
+      // close/_initialize replace stream state, so retain and destroy the old streams too.
+      const streams = Object.values(this.currentMessageState).flatMap(state => [state.videoStream, state.audioStream]);
+      for (const state of Object.values(this.currentMessageState)) {
+        this._clearTimeout(state.p2pStreamingTimeout);
+        this._clearTimeout(state.waitForSeqNoTimeout);
+        this._clearTimeout(state.waitForAudioData);
+      }
+      for (const state of this.messageStates.values()) {
+        this._clearTimeout(state.timeout);
+        this._clearTimeout(state.retryTimeout);
+      }
+      try { await this.close(); }
+      finally {
+        this._clearKeepaliveTimeout();
+        this._clearESDDisconnectTimeout();
+        this._clearLookup2Timeout();
+        this._clearLookup2RetryTimeout();
+        for (const state of Object.values(this.currentMessageState)) {
+          this._clearTimeout(state.p2pStreamingTimeout);
+          streams.push(state.videoStream, state.audioStream);
+        }
+        for (const stream of streams) stream?.destroy();
+        this.sendQueue = [];
+        this.socket.removeAllListeners(); // onClose normally allocates a replacement UDP socket.
+        await new Promise<void>((resolve, reject) => {
+          try { this.socket.close(() => resolve()); }
+          catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ERR_SOCKET_DGRAM_NOT_RUNNING") resolve();
+            else reject(error);
+          }
+        });
+        this.binded = false;
+        this.connected = false;
+        this.connecting = false;
+        this.removeAllListeners();
+      }
+    })();
+  }
+
   public async close(): Promise<void> {
     this.terminating = true;
     this._clearLookupTimeout();
