@@ -11,10 +11,15 @@
     "setup": "npm --prefix vendor/eufy-security-client ci",
     "build": "npm --prefix vendor/eufy-security-client run build:ts",
     "start": "node interface/server.cjs",
-    "test": "node --test \"capabilities/**/*.test.cjs\" \"api/**/*.test.cjs\" \"interface/**/*.test.cjs\" \"jobs/**/*.test.cjs\" \"cli/**/*.test.cjs\""
+    "test": "node --test \"capabilities/**/*.test.cjs\" \"api/**/*.test.cjs\" \"interface/**/*.test.cjs\" \"jobs/**/*.test.cjs\" \"cli/**/*.test.cjs\" \"agent/**/*.test.cjs\"",
+    "agent": "node agent/main.cjs",
+    "agent:smoke": "node agent/validate.cjs"
   },
   "dependencies": {
-    "ajv": "8.20.0"
+    "@openai/agents": "0.18.0",
+    "ajv": "8.20.0",
+    "openai": "7.15.0",
+    "zod": "4.1.13"
   },
   "bin": {
     "eufy": "cli/eufy.cjs"
