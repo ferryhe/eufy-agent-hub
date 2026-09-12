@@ -1,4 +1,6 @@
 const Ajv = require('ajv');
+const deviceSchemas = require('../capabilities/devices/schemas.cjs');
+const { CAPABILITIES, STATUSES } = require('../capabilities/devices/capabilities.cjs');
 const string = { type: 'string' };
 const nonempty = { type: 'string', pattern: '\\S' };
 const nullableString = { type: ['string', 'null'] };
@@ -13,15 +15,19 @@ const errorCodes = ['UNAUTHENTICATED', 'UNSUPPORTED_DEVICE', 'DEVICE_UNAVAILABLE
   'SERVICE_BUSY', 'SERVICE_STOPPING', 'INVALID_REQUEST', 'INVALID_WINDOW', 'INVALID_TIMEZONE',
   'AMBIGUOUS_OR_NONEXISTENT_TIME', 'JSON_REQUIRED', 'INPUT_TOO_LONG', 'LOCAL_HOST_REQUIRED',
   'LOCAL_ORIGIN_REQUIRED', 'JOB_UNAVAILABLE', 'JOB_NOT_FOUND', 'ARTIFACT_NOT_FOUND', 'NOT_FOUND',
-  'INTERNAL_ERROR', 'PARTIAL_RECORDING', 'EXPORT_FAILED', 'JOB_CANCELLED', 'LOGIN_REQUIRED'];
+  'INTERNAL_ERROR', 'PARTIAL_RECORDING', 'EXPORT_FAILED', 'JOB_CANCELLED', 'LOGIN_REQUIRED', 'CAPABILITY_RECORDS_UNAVAILABLE'];
 const error = object({ code: { enum: errorCodes }, message: string });
 const artifact = object({ id: string, name: string, path: string, url: string,
   playable: { type: 'boolean' }, validated: { type: 'boolean' },
   outcome: { enum: ['complete', 'partial', 'failed', 'cancelled', null] },
 });
 const device = object({ serial: string, name: string, model: nullableString, homeBaseId: nullableString,
-  channel: { type: ['integer', 'null'] }, availability: { enum: ['unknown', 'unavailable'] },
-  recordingExport: object({ supported: { type: 'boolean' }, status: { enum: ['verified', 'unsupported'] } }),
+  channel: { type: ['integer', 'null'], minimum: 0 }, availability: { enum: ['unknown', 'unavailable', 'online', 'offline'] },
+  recordingExport: object({ supported: { type: 'boolean' }, status: { enum: STATUSES } }),
+  firmware: deviceSchemas.firmware,
+  state: object({ inventoryStatus: { type: ['integer', 'null'] }, reason: string, observedAt: nullableString }),
+  verificationScope: deviceSchemas.scope, verificationHistory: array(deviceSchemas.record),
+  capabilities: object(Object.fromEntries(CAPABILITIES.map(name => [name, deviceSchemas.capability]))),
 });
 const result = { type: ['object', 'null'], required: ['outcome'], properties: {
   outcome: { enum: ['complete', 'partial', 'failed', 'cancelled'] },
@@ -49,6 +55,7 @@ const contract = {
     error: object({ error }),
     session: object({ authenticated: { type: 'boolean' }, phase: string, captcha: nullableString, busy: { type: 'boolean' }, loginUrl: { const: '/api/v1/session/login' }, verificationUrl: { const: '/api/v1/session/verify' }, logoutUrl: { const: '/api/v1/session/logout' } }),
     devices: object({ devices: array(device) }), deviceResponse: object({ device }),
+    capabilityResponse: object({ serial: string, capability: string, ...deviceSchemas.capability.properties }),
     ranges: object({ serial: string, window, ranges: array(object({ start: string, end: string })), coverage: { type: 'null' },
       availability: { enum: ['available', 'none'] }, code: { enum: ['NO_RECORDING', null] } }),
     submission: object({ job, reused: { type: 'boolean' } }), jobResponse: object({ job }),

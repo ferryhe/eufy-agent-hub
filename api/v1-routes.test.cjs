@@ -10,6 +10,7 @@ const { LocalEufySession } = require('../capabilities/auth/session.cjs');
 const { OUTPUT } = require('../capabilities/recordings/continuous-export.cjs');
 const { contract } = require('./v1-contract.cjs');
 const { DeviceType } = require('../adapters/eufy');
+const { DeviceVerificationRepository } = require('../capabilities/devices/verification-store.cjs');
 
 const ajv = new Ajv({ strict: false }); ajv.addSchema(contract);
 function check(name, value) {
@@ -51,6 +52,8 @@ async function fixture(t, options = {}) {
   const session = new LocalEufySession(() => api);
   session.close = () => { calls.sessionClosed = true; };
   const server = createServer({ port: 0, session, recordings: options.recordings || { close() {} }, outputRoot: directory,
+    capabilityRecordsPath: options.capabilityRecordsPath || path.join(directory, 'devices', 'verification.json'),
+    deviceRepository: options.deviceRepository,
     exports: { outputRoot: path.join(directory, 'jobs'), execute: options.execute || media(), createCapture: () => ({
       close() { calls.captureClosed = true; },
       async captureRange(serial, start, stop, destination, control) {
@@ -97,8 +100,159 @@ async function fixture(t, options = {}) {
     }
     assert.fail('Job did not finish');
   }
-  return { directory, calls, raw, api, session, server, origin, json, login, terminal };
+  return { directory, calls, raw, api, session, server, origin, json, login, terminal,
+    deviceRepository: options.deviceRepository || new DeviceVerificationRepository(options.capabilityRecordsPath || path.join(directory, 'devices', 'verification.json')) };
 }
+
+function capabilityObservation(scope, capability, status = 'verified') {
+  return { scope, capability, status, reason: 'offline_fixture_observation',
+    evidence: [{ source: 'offline-api-fixture', observedAt: '2026-09-11', outcome: 'partial' }] };
+}
+
+test('HTTP capability queries consume durable incremental records, expose four states and survive repository reopen', async t => {
+  const f = await fixture(t);
+  f.raw[0].main_sw_version = 'base-1'; f.raw[1].main_sw_version = 'camera-1';
+  const route = '/api/v1/devices/camera/capabilities/continuousRecordingQuery';
+  assert.equal((await f.json(route)).status, 401);
+  await f.login();
+  const initial = (await f.json('/api/v1/devices/camera', undefined, 'deviceResponse')).value.device;
+  assert.deepEqual(initial.firmware, { main: 'camera-1', secondary: null });
+  assert.equal(initial.recordingExport.status, 'protocol_hint');
+  f.deviceRepository.record(capabilityObservation(initial.verificationScope, 'continuousRecordingQuery'));
+  f.deviceRepository.record(capabilityObservation(initial.verificationScope, 'liveVideo', 'unsupported'));
+  const updated = await f.json(route, undefined, 'capabilityResponse');
+  assert.equal(updated.status, 200); assert.equal(updated.value.status, 'verified');
+  assert.equal(updated.value.serial, 'camera'); assert.equal(updated.value.capability, 'continuousRecordingQuery');
+  const oldScope = structuredClone(initial.verificationScope); oldScope.firmware.main = 'camera-old';
+  f.deviceRepository.record(capabilityObservation(oldScope, 'continuousRecordingQuery'));
+  const otherScope = structuredClone(initial.verificationScope); otherScope.serial = 'another-device';
+  f.deviceRepository.record(capabilityObservation(otherScope, 'continuousRecordingQuery'));
+  new DeviceVerificationRepository(f.deviceRepository.path).record(capabilityObservation(initial.verificationScope, 'continuousRecordingExport'));
+  const list = (await f.json('/api/v1/devices', undefined, 'devices')).value.devices;
+  const current = list.find(item => item.serial === 'camera');
+  assert.equal(current.capabilities.continuousRecordingQuery.status, 'verified');
+  assert.equal(current.capabilities.liveVideo.status, 'unsupported');
+  assert.equal(current.capabilities.eventRecordings.status, 'protocol_hint');
+  assert.equal(current.capabilities.rtsp.status, 'unknown');
+  assert.equal(current.recordingExport.supported, true);
+  assert.equal(current.recordingExport.status, 'verified');
+  assert.equal(current.capabilities.continuousRecordingExport.evidence[0].outcome, 'partial');
+  assert.equal(current.verificationHistory.length, 4);
+  assert.equal(current.verificationHistory.every(item => item.scope.serial === 'camera'), true);
+  for (const capability of ['liveVideo', 'rtsp', 'eventRecordings', 'futureControl', 'toString']) {
+    const result = await f.json(`/api/v1/devices/camera/capabilities/${capability}`, undefined, 'capabilityResponse');
+    assert.equal(result.status, 200);
+    if (['futureControl', 'toString'].includes(capability)) assert.equal(result.value.reason, 'capability_not_catalogued');
+  }
+  assert.equal((await f.json('/api/v1/devices/absent/capabilities/rtsp')).value.error.code, 'DEVICE_NOT_FOUND');
+  assert.equal((await f.json('/api/v1/session/logout', {})).status, 202);
+  assert.equal((await f.json(route)).status, 401);
+  assert.equal(f.deviceRepository.read().records.length, 5, 'Logout must retain long-lived capability evidence');
+  const reopened = await fixture(t, { capabilityRecordsPath: f.deviceRepository.path });
+  reopened.raw[0].main_sw_version = 'base-1'; reopened.raw[1].main_sw_version = 'camera-1';
+  await reopened.login();
+  assert.equal((await reopened.json(route, undefined, 'capabilityResponse')).value.status, 'verified');
+});
+
+test('HTTP keeps unknown metadata, absent parent identities and changed firmware/channel explanatory', async t => {
+  const f = await fixture(t); await f.login();
+  f.raw[0].main_sw_version = 'base-1'; f.raw[1].main_sw_version = 'camera-1';
+  const route = '/api/v1/devices/camera';
+  const scope = (await f.json(route, undefined, 'deviceResponse')).value.device.verificationScope;
+  f.deviceRepository.record(capabilityObservation(scope, 'continuousRecordingQuery'));
+  for (const [row, key, value] of [[1, 'main_sw_version', 'camera-2'], [0, 'main_sw_version', 'base-2'],
+    [1, 'device_channel', 2], [1, 'parent_sn', 'missing-base-A'], [1, 'main_sw_version', undefined]]) {
+    const previous = f.raw[row][key]; f.raw[row][key] = value;
+    const device = (await f.json(route, undefined, 'deviceResponse')).value.device;
+    assert.notEqual(device.capabilities.continuousRecordingQuery.status, 'verified');
+    assert.equal(device.verificationHistory.length, 1);
+    f.raw[row][key] = previous;
+  }
+  f.raw[1].parent_sn = 'missing-base-A'; delete f.raw[1].device_channel;
+  let missing = (await f.json(route, undefined, 'deviceResponse')).value.device;
+  assert.equal(missing.homeBaseId, null); assert.equal(missing.channel, null);
+  assert.equal(missing.verificationScope.homeBase.serial, 'missing-base-A');
+  assert.equal(missing.verificationScope.homeBase.firmware.main, null);
+  f.deviceRepository.record(capabilityObservation(missing.verificationScope, 'continuousRecordingQuery'));
+  f.raw[1].parent_sn = 'missing-base-B';
+  missing = (await f.json(route, undefined, 'deviceResponse')).value.device;
+  assert.equal(missing.capabilities.continuousRecordingQuery.status, 'unknown');
+  assert.equal(missing.verificationScope.homeBase.serial, 'missing-base-B');
+  assert.equal(missing.verificationHistory.length, 2);
+  f.raw[1].parent_sn = 'base'; f.raw[1].device_channel = 0; delete f.raw[1].main_sw_version;
+  const unversioned = (await f.json(route, undefined, 'deviceResponse')).value.device;
+  f.deviceRepository.record(capabilityObservation(unversioned.verificationScope, 'liveVideo'));
+  assert.equal((await f.json(`${route}/capabilities/liveVideo`, undefined, 'capabilityResponse')).value.status, 'protocol_hint');
+  f.raw[1].main_sw_version = 'camera-1';
+  const restored = (await f.json(route, undefined, 'deviceResponse')).value.device;
+  assert.equal(restored.capabilities.liveVideo.status, 'protocol_hint');
+  assert.equal(restored.verificationHistory.some(item => item.scope.firmware.main === null), true);
+  delete f.raw[2].device_model;
+  const unknown = (await f.json('/api/v1/devices/unsupported', undefined, 'deviceResponse')).value.device;
+  assert.equal(unknown.model, null); assert.equal(unknown.capabilities.rtsp.status, 'unknown');
+});
+
+test('HTTP shows persisted offline observations separately from capability evidence and range failures', async t => {
+  const f = await fixture(t, { rangeError: true }); await f.login();
+  f.raw[1].status = 0;
+  const deviceRoute = '/api/v1/devices/camera';
+  let device = (await f.json(deviceRoute, undefined, 'deviceResponse')).value.device;
+  assert.equal(device.availability, 'unknown'); assert.equal(device.state.inventoryStatus, 0);
+  const { requestId, serial, ...window } = request;
+  assert.equal((await f.json(`${deviceRoute}/recording-ranges`, window)).value.error.code, 'DEVICE_UNAVAILABLE');
+  device = (await f.json(deviceRoute, undefined, 'deviceResponse')).value.device;
+  assert.equal(device.capabilities.continuousRecordingQuery.status, 'protocol_hint');
+  assert.equal(device.availability, 'unknown');
+  f.deviceRepository.observeReachability({ serial: 'camera', status: 'offline', reason: 'explicit_reachability_observation', observedAt: '2026-09-11' });
+  device = (await f.json(deviceRoute, undefined, 'deviceResponse')).value.device;
+  assert.equal(device.availability, 'offline'); assert.equal(device.state.observedAt, '2026-09-11');
+  assert.equal(device.state.reason, 'explicit_reachability_observation');
+  assert.equal(device.recordingExport.status, 'protocol_hint');
+});
+
+test('capability reads preserve inventory admission ownership and recheck logout or expiry after the wait', async t => {
+  for (const mode of ['logout', 'expiry', 'login-guard']) await t.test(mode, async t => {
+    const f = await fixture(t); await f.login();
+    let release, entered; const gate = new Promise(resolve => { release = resolve; });
+    const started = new Promise(resolve => { entered = resolve; }); t.after(() => release());
+    f.api.getDevsListDecrypted = async () => { entered(); await gate; return { devices: f.raw }; };
+    const pending = f.json('/api/v1/devices/camera/capabilities/rtsp');
+    await started;
+    if (mode === 'logout') assert.equal((await f.json('/api/v1/session/logout', {})).status, 202);
+    if (mode === 'expiry') f.api.hasValidSession = () => false;
+    if (mode === 'login-guard') assert.equal((await f.json('/api/v1/session/login', { email: 'fixture@example.test', password: 'fixture', country: 'CA' })).status, 409);
+    release(); const result = await pending;
+    assert.equal(result.status, mode === 'login-guard' ? 200 : 401);
+    if (mode === 'login-guard') check('capabilityResponse', result.value);
+    else assert.equal(result.value.error.code, 'UNAUTHENTICATED');
+  });
+});
+
+test('capability query rejects a busy login and exposes storage errors without discarding records', async t => {
+  const f = await fixture(t); await f.login();
+  f.session.state.phase = 'busy';
+  assert.equal((await f.json('/api/v1/devices/camera/capabilities/rtsp')).value.error.code, 'SERVICE_BUSY');
+  f.session.state.phase = 'ready';
+  fs.mkdirSync(path.dirname(f.deviceRepository.path), { recursive: true });
+  fs.writeFileSync(f.deviceRepository.path, 'invalid-json');
+  const result = await f.json('/api/v1/devices/camera/capabilities/rtsp');
+  assert.equal(result.status, 503); assert.equal(result.value.error.code, 'CAPABILITY_RECORDS_UNAVAILABLE');
+  assert.equal(fs.readFileSync(f.deviceRepository.path, 'utf8'), 'invalid-json');
+});
+
+test('embedded device repository supplies observations only after authentication', async t => {
+  let reads = 0;
+  const deviceRepository = { read() {
+    reads++;
+    return { records: [], reachability: [{ serial: 'camera', status: 'online', reason: 'embedded_observation', observedAt: '2026-09-11' }] };
+  } };
+  const f = await fixture(t, { deviceRepository });
+  assert.equal((await f.json('/api/v1/devices')).status, 401); assert.equal(reads, 0);
+  await f.login();
+  const device = (await f.json('/api/v1/devices/camera', undefined, 'deviceResponse')).value.device;
+  assert.equal(device.availability, 'online'); assert.equal(device.state.reason, 'embedded_observation');
+  assert.equal(reads, 1);
+});
 
 // Deliver a normal JSON body across two writes, with another request between them.
 async function splitBody(f, route, data) {
