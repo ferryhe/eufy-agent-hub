@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { ContinuousExportService } = require('../capabilities/recordings/continuous-export.cjs');
 const { LocalContinuousRecordings } = require('../capabilities/recordings/continuous.cjs');
+const { PlaybackSessions } = require('../capabilities/recordings/playback-session.cjs');
 const { normalizeWindow } = require('../capabilities/recordings/time-window.cjs');
 const { recordingSegments } = require('../capabilities/recordings/continuous-completeness.cjs');
 const { describeDevices, queryCapability } = require('../capabilities/devices/capabilities.cjs');
@@ -56,8 +57,10 @@ function installV1Routes(server, session, options) {
   const drained = [];
   const release = () => { if (--pending === 0) for (const resolve of drained.splice(0)) resolve(); };
   const ranges = new Set();
+  const playback = new PlaybackSessions({ session, createConnection: options.playback?.createConnection,
+    resolveDevice: async serial => { const { devices, discovery } = await inventory(); return findDevice(devices, serial, discovery); } });
   const getExporter = () => exporter ||= new ContinuousExportService({ session, ...options.exports });
-  const active = () => pending > 0 || Boolean(exporter?.jobs.list().some(job => ['queued', 'running'].includes(job.state)));
+  const active = () => pending > 0 || playback.isBusy() || Boolean(exporter?.jobs.list().some(job => ['queued', 'running'].includes(job.state)));
   // Listening follows session restoration. Recover durable work without a new
   // caller request, and include that work in the existing session/media guards.
   server.once('listening', getExporter);
@@ -87,6 +90,29 @@ function installV1Routes(server, session, options) {
         busy: Boolean(options.isBusy() || active()), loginUrl: '/api/v1/session/login', verificationUrl: '/api/v1/session/verify', logoutUrl: '/api/v1/session/logout',
       });
       if (stopping) throw fault(503, 'SERVICE_STOPPING', 'The resident service is shutting down.');
+      if (route === '/api/v1/playback-sessions' && req.method === 'POST') {
+        const data = await body(req, origin, 'playbackStart');
+        requireCloudSession();
+        if (stopping) throw fault(503, 'SERVICE_STOPPING', 'The resident service is shutting down.');
+        if (options.isBusy() || active() || rangeBusy) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
+        const window = windowOf(data);
+        pending++;
+        try { return send(201, { playback: await playback.start({ serial: data.serial, speed: data.speed,
+          begin: Date.parse(window.normalized.start) / 1000, end: Date.parse(window.normalized.end) / 1000 }) }); }
+        finally { release(); }
+      }
+      const playbackMatch = /^\/api\/v1\/playback-sessions\/([^/]+)(?:\/(pause|resume|close))?$/.exec(route);
+      if (playbackMatch) {
+        const id = decodeURIComponent(playbackMatch[1]), action = playbackMatch[2];
+        if (req.method === 'GET' && !action) return send(200, { playback: playback.get(id) });
+        if (req.method === 'POST' && action) {
+          await body(req, origin, 'empty');
+          if (stopping) throw fault(503, 'SERVICE_STOPPING', 'The resident service is shutting down.');
+          if (options.isBusy()) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
+          pending++;
+          try { return send(200, { playback: await playback[action](id) }); } finally { release(); }
+        }
+      }
       const match = /^\/api\/v1\/devices(?:\/([^/]+)(?:\/(recording-ranges)|\/capabilities\/([^/]+))?)?$/.exec(route);
       if (match && ((req.method === 'GET' && !match[2]) || (req.method === 'POST' && match[2]))) {
         requireCloudSession();
@@ -104,7 +130,8 @@ function installV1Routes(server, session, options) {
           const device = findDevice(devices, decodeURIComponent(match[1]), discovery);
           if (match[3]) {
             const capability = decodeURIComponent(match[3]);
-            return send(200, { serial: device.serial, capability, ...queryCapability(device, capability), discovery });
+            return send(200, { serial: device.serial, capability, ...queryCapability(device, capability),
+              verificationScope: device.verificationScope, discovery });
           }
           if (!match[2]) return send(200, { device, discovery });
           requireSupported(device);
@@ -131,7 +158,7 @@ function installV1Routes(server, session, options) {
         if (existing) return send(200, { job: view(existing), reused: true });
         requireCloudSession();
         validateRequest('export', data);
-        if (options.isBusy() || rangeBusy) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
+        if (options.isBusy() || rangeBusy || playback.isBusy()) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
         pending++;
         try {
           const { devices, discovery } = await inventory();
@@ -162,7 +189,7 @@ function installV1Routes(server, session, options) {
         const existing = service.jobs.list().find(job => job.requestId === data.requestId);
         if (existing) return send(200, { job: view(existing), reused: true });
         requireCloudSession();
-        if (options.isBusy() || rangeBusy) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
+        if (options.isBusy() || rangeBusy || playback.isBusy()) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
         pending++;
         try {
           const { devices, discovery } = await inventory();
@@ -216,11 +243,12 @@ function installV1Routes(server, session, options) {
   }
   return {
     isBusy: active,
-    loggedOut: () => exporter?.requireLogin(),
+    loggedOut: async () => { await playback.closeActive(); exporter?.requireLogin(); },
     async shutdown() {
       stopping = true;
       // Admissions already in flight settle before we stop the resident worker.
       if (pending) await new Promise(resolve => drained.push(resolve));
+      await playback.shutdown();
       for (const connection of ranges) connection.close();
       await exporter?.shutdown();
     },

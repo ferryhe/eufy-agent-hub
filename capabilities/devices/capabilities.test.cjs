@@ -30,6 +30,53 @@ test('projection retains associations, firmware and uninterpreted inventory stat
   assert.equal(queryDevice(inventory, 'missing'), null);
 });
 
+test('playback execution requires typed controls in an exact fully known verified scope', () => {
+  const { playbackControls } = require('./capabilities.cjs');
+  const record = { ...observation('continuousPlaybackControls'),
+    controls: { pauseResumeAtSpeed1: true, verifiedStartSpeeds: [1, 2, 4, 16] } };
+  assert.deepEqual(playbackControls(queryDevice(inventory, camera.device_sn)), { pauseResumeAtSpeed1: false, verifiedStartSpeeds: [] });
+  assert.deepEqual(playbackControls(queryDevice(inventory, camera.device_sn, { records: [observation('continuousPlaybackControls')] })),
+    { pauseResumeAtSpeed1: false, verifiedStartSpeeds: [] });
+  assert.deepEqual(playbackControls(queryDevice(inventory, camera.device_sn, { records: [record] })), record.controls);
+  for (const changed of [[base, { ...camera, device_channel: 2 }], [base, { ...camera, sec_sw_version: null }],
+    [{ ...base, main_sw_version: 'changed' }, camera], [base, { ...camera, device_sn: 'other' }]]) {
+    assert.deepEqual(playbackControls(describeDevices(changed, { records: [record] })[1]), { pauseResumeAtSpeed1: false, verifiedStartSpeeds: [] });
+  }
+  for (const invalid of [{ ...record, controls: { ...record.controls, verifiedStartSpeeds: [8] } },
+    { ...record, status: 'protocol_hint' }, { ...record, capability: 'liveVideo' }]) assert.throws(() => recordCapability([], invalid));
+});
+
+test('continuous playback controls remain an unverified hint even with scoped partial-export evidence', () => {
+  const records = ['continuousRecordingQuery', 'continuousRecordingExport'].map(capability => observation(capability));
+  const device = queryDevice(inventory, camera.device_sn, { records });
+  assert.equal(device.recordingExport.status, 'verified');
+  assert.deepEqual(queryCapability(device, 'continuousPlaybackControls'), {
+    status: 'protocol_hint', reason: 'android_6001_controls_require_device_firmware_verification', evidence: [],
+    controls: { pauseResumeAtSpeed1: false, verifiedStartSpeeds: [] },
+  });
+  assert.deepEqual(device.capabilities.continuousPlaybackControls, queryCapability(device, 'continuousPlaybackControls'));
+  assert.equal(device.verificationHistory.some(record => record.capability === 'continuousPlaybackControls'), false);
+});
+
+test('continuous playback controls have no hint outside the constrained camera, HomeBase and channel mapping', () => {
+  const variants = [
+    [base],
+    [base, { ...camera, device_model: 'OTHER' }],
+    [base, { ...camera, device_type: undefined }],
+    [{ ...base, device_model: 'OTHER' }, camera],
+    [{ ...camera, parent_sn: 'absent' }],
+    [base, { ...camera, parent_sn: undefined }],
+    ...[undefined, null, -1, 0.5, '1'].map(device_channel => [base, { ...camera, device_channel }]),
+  ];
+  for (const changed of variants) {
+    const device = describeDevices(changed).at(-1);
+    assert.deepEqual(queryCapability(device, 'continuousPlaybackControls'), {
+      status: 'unknown', reason: 'no_verified_continuous_playback_controls_path', evidence: [],
+      controls: { pauseResumeAtSpeed1: false, verifiedStartSpeeds: [] },
+    });
+  }
+});
+
 test('unknown model and missing association/channel remain explicit and unverified', () => {
   const device = queryDevice([{ device_sn: 'unknown', device_type: 99999 }], 'unknown');
   assert.equal(device.model, null);

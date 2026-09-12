@@ -15,6 +15,8 @@ const { JobService } = require('../jobs/service.cjs');
 const { normalizeWindow } = require('../capabilities/recordings/time-window.cjs');
 const { cli } = require('../cli/test-helper.cjs');
 const { RecordingTools } = require('../agent/tools.cjs');
+const { EventEmitter } = require('node:events');
+const { P2PClientProtocol } = require('../adapters/eufy');
 
 const ajv = new Ajv({ strict: false }); ajv.addSchema(contract);
 function check(name, value) {
@@ -62,6 +64,7 @@ async function fixture(t, options = {}) {
   const server = createServer({ port: 0, session, recordings: options.recordings || { close() {} }, outputRoot: directory,
     capabilityRecordsPath: options.capabilityRecordsPath || path.join(directory, 'devices', 'verification.json'),
     deviceRepository: options.deviceRepository,
+    playback: options.playback,
     exports: { outputRoot: path.join(directory, 'jobs'), execute: options.execute || media(), createCapture: () => ({
       close() { calls.captureClosed = true; },
       async captureRange(serial, start, stop, destination, control) {
@@ -116,6 +119,79 @@ function capabilityObservation(scope, capability, status = 'verified') {
   return { scope, capability, status, reason: 'offline_fixture_observation',
     evidence: [{ source: 'offline-api-fixture', observedAt: '2026-09-11', outcome: 'partial' }] };
 }
+
+function playbackFixture() {
+  const p = new EventEmitter(), commands = [];
+  Object.assign(p, { connected: true, deviceSNs: {}, sendQueue: [], messageStates: new Map(), streamTimeouts: { streamDataWait: 5000 },
+    currentMessageState: { 1: { p2pStreaming: false, p2pStreamNotStarted: true, invalidStream: false, queuedData: new Map() } } });
+  for (const name of ['startContinuousPlayback', 'stopContinuousPlayback', 'waitForStreamData', 'endStream', 'emitStreamStopEvent', 'setStreamTimeouts']) p[name] = P2PClientProtocol.prototype[name];
+  p.isConnected = () => p.connected; p.isCurrentlyStreaming = () => p.currentMessageState[1].p2pStreaming;
+  p.initializeMessageBuilder = p.initializeMessageState = p.initializeStream = p.closeEnergySavingDevice = () => {};
+  p.queryContinuousRecordings = (_serial, channel, start, stop) => p.emit('continuous recording ranges', channel,
+    { begin_time: start, end_time: stop, videos: [{ start_time: start, stop_time: stop, file_path: 'private-fixture-path' }] });
+  p.sendCommandWithStringPayload = (command, customData) => {
+    const cmd = JSON.parse(command.value).data.cmd; commands.push(cmd);
+    queueMicrotask(() => {
+      p.emit('command', { command_type: 6001, channel: 0, return_code: 0, customData });
+      if (cmd === 0 || cmd === 2) {
+        p.emit('continuous playback frame', { kind: 'video', channel: 0, timestamp: begin * 1000 + (cmd === 0 ? 1000 : 2000) });
+        p.currentMessageState[1].p2pStreamNotStarted = false;
+      }
+    });
+  };
+  let created = 0, closed = false, closeGate;
+  p.close = async () => { await closeGate; clearTimeout(p.currentMessageState[1].p2pStreamingTimeout); p.connected = false; p.continuousPlayback = undefined; closed = true; p.emit('close'); };
+  return { commands, p, created: () => created, closed: () => closed, delayClose: gate => { closeGate = gate; },
+    createConnection: () => { created++; return { connect: async () => {}, close: async () => {}, userId: 'private-fixture-account',
+      station: { p2pSession: p, getSerial: () => 'base', getModel: () => 'T8030' },
+      camera: { getSerial: () => 'camera', getModel: () => 'T8600', getStationSerial: () => 'base', getChannel: () => 0 } }; } };
+}
+async function enablePlayback(f) {
+  for (const row of f.raw) { row.main_sw_version = 'main-fixture'; row.sec_sw_version = 'secondary-fixture'; }
+  const { value } = await f.json('/api/v1/devices/camera', undefined, 'deviceResponse');
+  f.deviceRepository.record({ ...capabilityObservation(value.device.verificationScope, 'continuousPlaybackControls'),
+    controls: { pauseResumeAtSpeed1: true, verifiedStartSpeeds: [1, 2, 4, 16] } });
+}
+const playbackInput = () => { const { requestId, ...input } = request; return { ...input, speed: 1 }; };
+
+test('production playback HTTP requires durable scoped controls and returns the same owner across opaque session actions', async t => {
+  const p = playbackFixture(), f = await fixture(t, { playback: { createConnection: p.createConnection } }); await f.login();
+  assert.equal((await f.json('/api/v1/playback-sessions', playbackInput())).value.error.code, 'CONTROL_NOT_VERIFIED');
+  assert.equal(p.created(), 0); await enablePlayback(f);
+  const controls = await f.json('/api/v1/devices/camera/capabilities/continuousPlaybackControls', undefined, 'capabilityResponse');
+  assert.deepEqual(controls.value.controls, { pauseResumeAtSpeed1: true, verifiedStartSpeeds: [1, 2, 4, 16] });
+  await f.json('/api/v1/devices/camera/capabilities/rtsp', undefined, 'capabilityResponse');
+  assert.equal((await f.json('/api/v1/playback-sessions', { ...playbackInput(), speed: 8 })).value.error.code, 'CONTROL_NOT_VERIFIED');
+  const started = await f.json('/api/v1/playback-sessions', playbackInput(), 'playbackResponse');
+  assert.equal(started.status, 201); const id = started.value.playback.sessionId;
+  assert.equal((await f.json('/api/v1/session')).value.busy, true);
+  assert.equal((await f.json('/api/v1/exports', request)).value.error.code, 'SERVICE_BUSY');
+  assert.equal((await f.json('/api/v1/devices/camera/recording-ranges', request)).value.error.code, 'SERVICE_BUSY');
+  assert.equal((await f.json('/recordings/query', {})).status, 409);
+  assert.equal((await f.json(`/api/v1/playback-sessions/${id}/pause`, { channel: 2 })).status, 400);
+  for (const action of ['pause', 'resume', 'close']) {
+    const result = await f.json(`/api/v1/playback-sessions/${id}/${action}`, {}, 'playbackResponse');
+    assert.equal(result.status, 200); assert.equal(result.value.playback.sessionId, id);
+    assert.equal(JSON.stringify(result.value).includes('private-fixture'), false);
+  }
+  assert.deepEqual(p.commands, [0, 1, 2, 3]); assert.equal(p.created(), 1); assert.equal(p.closed(), true);
+  assert.equal((await f.json('/api/v1/session')).value.busy, false);
+});
+
+for (const action of ['logout', 'shutdown']) test(`production playback ${action} waits for dedicated cleanup before releasing the cloud session`, async t => {
+  const p = playbackFixture(), f = await fixture(t, { playback: { createConnection: p.createConnection } }); await f.login(); await enablePlayback(f);
+  await f.json('/api/v1/playback-sessions', playbackInput(), 'playbackResponse');
+  let release; p.delayClose(new Promise(resolve => { release = resolve; }));
+  let settled = false;
+  const pending = (action === 'logout' ? f.json('/api/v1/session/logout', {}) : f.server.shutdown()).then(value => { settled = true; return value; });
+  try {
+    for (let i = 0; i < 20 && !p.commands.includes(3); i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(p.commands.includes(3), true); assert.equal(settled, false);
+    assert.equal(f.session.isAuthenticated(), true); assert.equal(f.calls.sessionClosed, false);
+  } finally { release(); }
+  await pending; assert.equal(p.closed(), true);
+  if (action === 'logout') assert.equal(f.session.isAuthenticated(), false); else assert.equal(f.calls.sessionClosed, true);
+});
 
 test('device discovery HTTP responses deduplicate capped inventory and expose unverified completeness', async t => {
   const f = await fixture(t); await f.login();
@@ -314,6 +390,38 @@ test('HTTP concurrent retry identities create one attempt and recheck expiry aft
   }
 });
 
+test('HTTP continuous playback controls queries preserve device scope without advertising verified controls or speeds', async t => {
+  const f = await fixture(t); await f.login();
+  f.raw[0].main_sw_version = 'base-1'; f.raw[1].main_sw_version = 'camera-1';
+  f.raw.push({ ...f.raw[1], device_sn: 'second-camera', device_channel: 1, main_sw_version: 'camera-2' });
+  const list = (await f.json('/api/v1/devices', undefined, 'devices')).value.devices;
+  for (const device of list) {
+    const expected = ['camera', 'second-camera'].includes(device.serial) ? {
+      status: 'protocol_hint', reason: 'android_6001_controls_require_device_firmware_verification', evidence: [],
+    } : { status: 'unknown', reason: 'no_verified_continuous_playback_controls_path', evidence: [] };
+    expected.controls = { pauseResumeAtSpeed1: false, verifiedStartSpeeds: [] };
+    assert.deepEqual(device.capabilities.continuousPlaybackControls, expected);
+    const route = `/api/v1/devices/${device.serial}`;
+    const single = (await f.json(route, undefined, 'deviceResponse')).value.device;
+    assert.deepEqual(single.verificationScope, device.verificationScope);
+    assert.deepEqual(single.capabilities.continuousPlaybackControls, expected);
+    const capability = await f.json(`${route}/capabilities/continuousPlaybackControls`, undefined, 'capabilityResponse');
+    assert.equal(capability.status, 200);
+    assert.deepEqual(capability.value, {
+      serial: device.serial, capability: 'continuousPlaybackControls', ...expected, discovery: capability.value.discovery,
+      verificationScope: device.verificationScope,
+    });
+  }
+  for (const [serial, main, channel] of [['camera', 'camera-1', 0], ['second-camera', 'camera-2', 1]]) {
+    assert.deepEqual(list.find(device => device.serial === serial).verificationScope, {
+      serial, model: 'T8600', firmware: { main, secondary: null }, channel,
+      homeBase: { serial: 'base', model: 'T8030', firmware: { main: 'base-1', secondary: null } },
+    });
+  }
+  assert.equal(f.calls.capture, 0); assert.equal(f.calls.range, 0);
+  assert.deepEqual(f.deviceRepository.read().records, []);
+});
+
 test('HTTP capability queries consume durable incremental records, expose four states and survive repository reopen', async t => {
   const f = await fixture(t);
   f.raw[0].main_sw_version = 'base-1'; f.raw[1].main_sw_version = 'camera-1';
@@ -328,6 +436,7 @@ test('HTTP capability queries consume durable incremental records, expose four s
   const updated = await f.json(route, undefined, 'capabilityResponse');
   assert.equal(updated.status, 200); assert.equal(updated.value.status, 'verified');
   assert.equal(updated.value.serial, 'camera'); assert.equal(updated.value.capability, 'continuousRecordingQuery');
+  assert.deepEqual(updated.value.verificationScope, initial.verificationScope);
   const oldScope = structuredClone(initial.verificationScope); oldScope.firmware.main = 'camera-old';
   f.deviceRepository.record(capabilityObservation(oldScope, 'continuousRecordingQuery'));
   const otherScope = structuredClone(initial.verificationScope); otherScope.serial = 'another-device';
@@ -347,6 +456,7 @@ test('HTTP capability queries consume durable incremental records, expose four s
   for (const capability of ['liveVideo', 'rtsp', 'eventRecordings', 'futureControl', 'toString']) {
     const result = await f.json(`/api/v1/devices/camera/capabilities/${capability}`, undefined, 'capabilityResponse');
     assert.equal(result.status, 200);
+    assert.deepEqual(result.value.verificationScope, current.verificationScope);
     if (['futureControl', 'toString'].includes(capability)) assert.equal(result.value.reason, 'capability_not_catalogued');
   }
   assert.equal((await f.json('/api/v1/devices/absent/capabilities/rtsp')).value.error.code, 'DEVICE_NOT_FOUND');
@@ -371,6 +481,8 @@ test('HTTP keeps unknown metadata, absent parent identities and changed firmware
     const device = (await f.json(route, undefined, 'deviceResponse')).value.device;
     assert.notEqual(device.capabilities.continuousRecordingQuery.status, 'verified');
     assert.equal(device.verificationHistory.length, 1);
+    const controls = await f.json(`${route}/capabilities/continuousPlaybackControls`, undefined, 'capabilityResponse');
+    assert.deepEqual(controls.value.verificationScope, device.verificationScope);
     f.raw[row][key] = previous;
   }
   f.raw[1].parent_sn = 'missing-base-A'; delete f.raw[1].device_channel;

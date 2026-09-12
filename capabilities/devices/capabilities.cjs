@@ -2,7 +2,7 @@ const { DeviceCommands, CommandName } = require('../../adapters/eufy');
 const { continuousDevices } = require('./continuous-mapping.cjs');
 
 const CAPABILITIES = Object.freeze([
-  'continuousRecordingQuery', 'continuousRecordingExport', 'eventRecordings', 'liveVideo', 'talkback', 'rtsp',
+  'continuousRecordingQuery', 'continuousRecordingExport', 'continuousPlaybackControls', 'eventRecordings', 'liveVideo', 'talkback', 'rtsp',
 ]);
 const STATUSES = Object.freeze(['verified', 'unsupported', 'unknown', 'protocol_hint']);
 const text = value => typeof value === 'string' && value.trim() ? value : null;
@@ -37,6 +37,15 @@ function validateRecord(record) {
   if (!validDevice(scope) || !(scope.homeBase === null || validDevice(scope.homeBase))
     || !(scope.channel === null || channel(scope.channel) !== null)) throw new Error('Explicit device and firmware scope is required.');
   if (!text(record.reason)) throw new Error('Capability reason is required.');
+  if (record.controls !== undefined) {
+    const controls = record.controls;
+    if (record.capability !== 'continuousPlaybackControls' || record.status !== 'verified'
+      || !controls || Object.keys(controls).sort().join(',') !== 'pauseResumeAtSpeed1,verifiedStartSpeeds'
+      || typeof controls.pauseResumeAtSpeed1 !== 'boolean' || !Array.isArray(controls.verifiedStartSpeeds)
+      || controls.verifiedStartSpeeds.some(speed => ![1, 2, 4, 16].includes(speed))
+      || new Set(controls.verifiedStartSpeeds).size !== controls.verifiedStartSpeeds.length
+      || (controls.pauseResumeAtSpeed1 && !controls.verifiedStartSpeeds.includes(1))) throw new Error('Invalid verified playback controls.');
+  }
   if (!Array.isArray(record.evidence) || record.evidence.some(item => !text(item?.source)
     || !text(item.observedAt) || !Number.isFinite(Date.parse(item.observedAt)) || !text(item.outcome))
     || (['verified', 'unsupported'].includes(record.status) && !record.evidence.length)) {
@@ -58,6 +67,11 @@ function entry(status, reason, evidence = []) {
 }
 
 function defaultCapability(capability, raw, base, eligible) {
+  if (capability === 'continuousPlaybackControls') {
+    return eligible
+      ? entry('protocol_hint', 'android_6001_controls_require_device_firmware_verification')
+      : entry('unknown', 'no_verified_continuous_playback_controls_path');
+  }
   if (capability === 'continuousRecordingQuery' || capability === 'continuousRecordingExport') {
     if (eligible) return entry('protocol_hint', 'tested_model_path_requires_device_firmware_verification');
     if (raw.device_model === 'T8030') return entry('protocol_hint', 'historical_homebase_path_requires_device_firmware_verification');
@@ -91,9 +105,12 @@ function describeDevices(inventory, { records = [], reachability = [] } = {}) {
       for (const record of records) {
         if (scopeKey(record.scope) === scopeKey(scope)) {
           capabilities[record.capability] = entry(record.status, record.reason, record.evidence);
+          if (record.controls) capabilities[record.capability].controls = structuredClone(record.controls);
         }
       }
     }
+    capabilities.continuousPlaybackControls.controls = playbackControls({ verificationScope: scope, capabilities,
+      recordingExport: device.recordingExport });
     // Mega inventory status has no documented online/offline semantics. Reachability is an explicit,
     // dated observation supplied by the caller, never inferred from status codes or a LAN address.
     const observed = reachability.findLast(item => item.serial === raw.device_sn && ['online', 'offline'].includes(item.status)
@@ -125,4 +142,14 @@ function queryCapability(device, capability) {
     || entry('unknown', 'capability_not_catalogued'));
 }
 
-module.exports = { CAPABILITIES, STATUSES, describeDevices, queryDevice, queryCapability, recordCapability };
+function playbackControls(device) {
+  const empty = { pauseResumeAtSpeed1: false, verifiedStartSpeeds: [] };
+  const scope = device?.verificationScope, capability = device?.capabilities?.continuousPlaybackControls;
+  if (!device?.recordingExport?.supported || scope?.model !== 'T8600' || scope.homeBase?.model !== 'T8030'
+    || !Number.isInteger(scope.channel) || scope.channel < 0
+    || ![scope.firmware?.main, scope.firmware?.secondary, scope.homeBase.firmware?.main, scope.homeBase.firmware?.secondary].every(text)
+    || capability?.status !== 'verified' || !capability.controls) return empty;
+  return structuredClone(capability.controls);
+}
+
+module.exports = { CAPABILITIES, STATUSES, describeDevices, queryDevice, queryCapability, recordCapability, playbackControls, scopeKey };
