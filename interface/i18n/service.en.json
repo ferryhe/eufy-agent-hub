@@ -56,5 +56,7 @@
   "service.recordings.exporting": "Downloading and converting the recording. It will be playable when finished…",
   "service.recordings.found": "Event recordings found: {count}. This list does not represent complete continuous footage.",
   "service.recordings.saved": "The recording was saved and passed full decoding checks. Play or download it below.",
-  "service.recordings.unsupportedDevice": "This device does not support the current event recording export."
+  "service.recordings.unsupportedDevice": "This device does not support the current event recording export.",
+  "service.auth.restoreFailed": "The saved session could not be restored. Please sign in again.",
+  "service.auth.loggedOut": "Signed out. Please sign in again."
 }
