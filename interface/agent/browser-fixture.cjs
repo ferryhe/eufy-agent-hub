@@ -16,7 +16,7 @@ async function start() {
   const media = path.join(evidence, 'synthetic.mp4'), raw = path.join(evidence, 'synthetic.h264');
   await runFfmpeg(['-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=20', '-t', '3', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', media]);
   await runFfmpeg(['-y', '-i', media, '-c:v', 'copy', '-bsf:v', 'h264_mp4toannexb', '-f', 'h264', raw]);
-  let receiptId, loseResponse = false;
+  let receiptId, jobId, loseResponse = false;
   const model = new ScriptedModel([]);
   const options = { model, loggedOut: true, challenge: true, partial: true, delay: 12000, media,
     devices: [{ device_sn: 'CAMERA001', device_name: 'Synthetic camera' },
@@ -36,6 +36,24 @@ async function start() {
   const original = f.server.listeners('request')[0]; f.server.removeListener('request', original);
   f.server.on('request', async (req, res) => {
     const route = new URL(req.url, f.url).pathname;
+    if (route === '/') {
+      const end = res.end.bind(res);
+      res.end = chunk => end(String(chunk).replace('</html>', '<script src="/fixture/probe.js"></script></html>'));
+    }
+    if (route === '/fixture/probe.js') {
+      res.writeHead(200, { 'Content-Type': 'text/javascript' });
+      return res.end(`let nextVideo = 0;
+        const probe = document.createElement('details'); probe.id = 'fixture-probe';
+        probe.innerHTML = '<summary>Synthetic fixture diagnostics</summary><pre></pre>'; document.body.append(probe);
+        setInterval(() => {
+          for (const video of document.querySelectorAll('video')) if (!video.dataset.fixtureVideo) {
+            video.dataset.fixtureVideo = String(++nextVideo); video.loop = true; video.muted = true;
+          }
+          probe.querySelector('pre').textContent = JSON.stringify({ synthetic: true,
+            layout: JSON.parse(localStorage.getItem('eufy-agent-hub.workspace') || 'null'),
+            videos: [...document.querySelectorAll('video')].map(v => ({ id: v.dataset.fixtureVideo, src: v.src, time: v.currentTime, paused: v.paused, readyState: v.readyState })) }, null, 2);
+        }, 300);`);
+    }
     if (loseResponse && route === '/interface/agent/turn' && req.method === 'POST') {
       loseResponse = false;
       // The real adapter accepts and persists the turn, then the connection loses its reply.
@@ -50,7 +68,27 @@ async function start() {
     if (data.scenario === 'missing') args.start = '';
     if (data.scenario === 'ambiguous') args.device = 'Repeated';
     if (data.scenario === 'error') args.timezone = 'Invalid/Zone';
-    if (data.scenario === 'response-lost') {
+    const view = value => ({ type: '', deviceIds: null, receiptId: null, jobId: null, artifactId: null, ...value });
+    if (data.scenario === 'workspace-devices') model.enqueue(call('workspace_present', { version: 1, views: [view({ type: 'device-list' })] }), [assistantMessage('Synthetic device workspace.')]);
+    else if (data.scenario === 'export-present-failed') model.enqueue(call('recording_ranges', args),
+      modelResponder(({ request }) => { receiptId = last(request).id; return call('recording_export', { receiptId }); }),
+      modelResponder(() => { throw new Error('Synthetic model failure after export acceptance'); }));
+    else if (data.scenario === 'workspace') {
+      model.enqueue(call('devices_list', {}), call('recording_ranges', args),
+        modelResponder(({ request }) => { receiptId = last(request).id; return call('recording_export', { receiptId }); }),
+        modelResponder(({ request }) => { jobId = last(request).job.jobId; return call('workspace_present', { version: 1, views: [
+          view({ type: 'job-card', jobId }), view({ type: 'timeline', receiptId }),
+          view({ type: 'device-list', deviceIds: ['CAMERA001'] }), view({ type: 'future-card' }),
+        ] }); }), [assistantMessage('Synthetic workspace composed. The resident owns the export.')]);
+    }
+    else if (data.scenario === 'workspace-player') model.enqueue(call('job_artifacts', { jobId }),
+      modelResponder(({ request }) => call('workspace_present', { version: 1, views: [
+        view({ type: 'player', jobId, artifactId: last(request).videos[0].id }),
+        view({ type: 'device-list', deviceIds: ['CAMERA001'] }), view({ type: 'timeline', receiptId }),
+        view({ type: 'job-card', jobId }), view({ type: 'future-card' }),
+      ] })), [assistantMessage('Synthetic player uses the existing registered artifact.')]);
+    else if (data.scenario === 'snapshot') { /* Counters only; enqueue no model calls. */ }
+    else if (data.scenario === 'response-lost') {
       loseResponse = true;
       model.enqueue([assistantMessage('请提供录像日期。')]);
     }

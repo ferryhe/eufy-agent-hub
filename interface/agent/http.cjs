@@ -21,11 +21,13 @@ function installAgentRoutes(server, { getOrigin, ...options }) {
     client.save();
     return client;
   };
-  async function snapshot() {
+  async function snapshot(requestedJobs = []) {
     const c = getClient();
-    const jobs = await Promise.all([...new Set(Object.values(c.state.requests).map(r => r.jobId).filter(Boolean))]
-      .map(jobId => c.job({ jobId })));
+    const jobs = await Promise.all([...new Set([...Object.values(c.state.requests).map(r => r.jobId),
+      ...(c.state.presentation?.views || []).map(v => v.jobId), ...requestedJobs].filter(Boolean))]
+      .map(async jobId => ({ jobId, ...await c.job({ jobId }) })));
     return { turns: c.state.interface.turns, receipts: Object.values(c.state.receipts), jobs,
+      presentation: c.state.presentation,
       notices: c.events.filter(e => e.output?.error).map(e => e.output), busy: Boolean(active) };
   }
   const original = server.listeners('request')[0];
@@ -40,8 +42,12 @@ function installAgentRoutes(server, { getOrigin, ...options }) {
     const fail = (status, code, message) => send(status, { error: { code, message } });
     try {
       if (req.headers.host !== new URL(origin).host) return fail(403, 'LOCAL_HOST_REQUIRED', 'Use the local service address.');
-      if (req.method === 'GET' && route === '/interface/agent/state') return send(200, await snapshot());
-      if (req.method !== 'POST' || route !== '/interface/agent/turn') return fail(404, 'NOT_FOUND', 'Unknown interface route.');
+      if (req.method === 'GET' && route === '/interface/agent/state') {
+        const requestedJobs = new URL(req.url, origin).searchParams.getAll('jobId');
+        if (requestedJobs.some(id => !id || id.length > 200)) return fail(400, 'INVALID_REQUEST', 'Provide valid job IDs.');
+        return send(200, await snapshot(requestedJobs));
+      }
+      if (req.method !== 'POST' || !['/interface/agent/turn', '/interface/agent/export'].includes(route)) return fail(404, 'NOT_FOUND', 'Unknown interface route.');
       if (req.headers.origin !== origin) return fail(403, 'LOCAL_ORIGIN_REQUIRED', 'Use the local page.');
       if (!req.headers['content-type']?.startsWith('application/json')) return fail(415, 'JSON_REQUIRED', 'Use JSON.');
       let body = '';
@@ -51,6 +57,13 @@ function installAgentRoutes(server, { getOrigin, ...options }) {
       }
       let data;
       try { data = JSON.parse(body); } catch { return fail(400, 'INVALID_REQUEST', 'Invalid JSON.'); }
+      if (route === '/interface/agent/export') {
+        if (!data || Object.keys(data).length !== 1 || typeof data.receiptId !== 'string' || !data.receiptId || data.receiptId.length > 200)
+          return fail(400, 'INVALID_REQUEST', 'Provide a receipt ID.');
+        if (stopping) return fail(503, 'SERVICE_STOPPING', 'The resident is stopping.');
+        const c = getClient(), result = await c.submit(data);
+        return send(result.error && !result.job ? 409 : 200, result);
+      }
       if (!data || Object.keys(data).some(k => !['id', 'text', 'locale'].includes(k))
         || typeof data.id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(data.id)
         || typeof data.text !== 'string' || !data.text.trim() || data.text.length > 16000

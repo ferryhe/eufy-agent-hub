@@ -22,7 +22,7 @@ Choose **Browse recordings** for the existing login and event search/download fl
 | `pages/` | Migrated | Fixed feature pages |
 | `components/` | Implemented | Shared cards, timelines, and players |
 | `agent/` | Implemented | Resident conversation adapter, sidebar and job observation |
-| `workspace/` | Planned | Dynamic result composition, pinned results, and layout restoration |
+| `workspace/` | Runnable | Registered Agent composition, pinned references, ordering and API layout restoration |
 | `i18n/` | Implemented | Shared English/Chinese catalogs, automatic browser-language matching, and manual selection |
 
 The page defaults to the browser's preferred language, with English fallback. English/Chinese preferences are remembered locally. Fixed event searches retain their explicit `America/Toronto` behavior. Agent requests pass caller times unchanged to service normalization and display the service's effective timezone. A separate response-language preference changes explanations without rewriting names, times or earlier messages. Both modes use the [localization contract](i18n/README.md).

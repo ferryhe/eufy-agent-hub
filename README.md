@@ -6,7 +6,7 @@
 
 An eufy capability platform for agents: account access, device discovery, recording queries, and exports are organized into reusable modules, with a shared CLI/API and local Agent integration. Additional interfaces are planned.
 
-**This release includes a resident recording API.** Account access, device listing and event-recording pages remain available. The [v1 API](api/v1.md) connects the supported continuous recording path to durable jobs, full media validation and explicit complete/partial/failed results. The [CLI](cli/README.md) uses that same resident API for authentication, devices, continuous recording jobs and artifact downloads. The [Recording Agent](agent/README.md) adds one local OpenAI Agents SDK runtime and structured HTTP tools; a [new real hardware record](agent/VALIDATION.md) produced a playable partial video with passed media validation and incomplete coverage. The [Agent sidebar](interface/agent/README.md) now shares device/timeline/player/job results with fixed browsing; the dynamic workspace remains planned.
+**This release includes a resident recording API.** Account access, device listing and event-recording pages remain available. The [v1 API](api/v1.md) connects the supported continuous recording path to durable jobs, full media validation and explicit complete/partial/failed results. The [CLI](cli/README.md) uses that same resident API for authentication, devices, continuous recording jobs and artifact downloads. The [Recording Agent](agent/README.md) adds one local OpenAI Agents SDK runtime and structured HTTP tools; a [new real hardware record](agent/VALIDATION.md) produced a playable partial video with passed media validation and incomplete coverage. The [Agent sidebar](interface/agent/README.md) now shares device/timeline/player/job results with fixed browsing; [the dynamic workspace](interface/workspace/README.md) supports Agent composition, pinning, ordering and restoration from current API data.
 
 ### Available capabilities
 
@@ -18,7 +18,7 @@ An eufy capability platform for agents: account access, device discovery, record
 | Same directory: `continuous.cjs` / `mux.py` | Continuous ranges, playback by time, timestamped raw-frame capture | Experimental; short clip tested, long-clip completeness pending |
 | [capabilities/live](capabilities/live) | Ownership of live-video capabilities | Wrapping and hardware validation pending |
 | [api](api) | Resident v1 recording jobs and the original page protocol | Device/range/job/artifact contract; legacy page preserved |
-| [interface](interface) | Fixed login, device, event-recording, and player page | Runnable fixed browsing and Agent sidebar; dynamic workspace pending |
+| [interface](interface) | Fixed login, device, event-recording, and player page | Runnable fixed browsing, Agent sidebar and persistent dynamic workspace |
 | [jobs](jobs) | Durable job identity, state, per-HomeBase queue, and output ownership | Phase A module with offline tests; service/recording integration and Phase B recovery pending |
 | [cli](cli) | HTTP command-line client for the resident service | Runnable auth, devices, ranges/exports, jobs and artifacts |
 | [agent](agent) | Single SDK Agent with structured resident HTTP tools | New real model-to-hardware run recorded; playable partial, incomplete coverage |
@@ -97,14 +97,14 @@ interface/
   pages/                    Fixed feature pages
   components/               Shared device/job cards, players, and timelines
   agent/                    Resident conversation adapter and sidebar
-  workspace/                Planned result composition, pinning, and restoration
+  workspace/                Registered result composition, pinning, and restoration
 vendor/eufy-security-client/ Protocol source with required local patches
 docs/                       Architecture, migration mapping, and work items
 output/                     Runtime exports; excluded from Git
 ```
 
 Target flow: **interface / agent / CLI → shared API → persistent job service → capabilities → eufy**.
-The service executes long-running exports. The agent interprets requests, selects tools, follows jobs, and presents actual results. Fixed pages and agent mode will share components, with players and job cards composed in the main workspace.
+The service executes long-running exports. The agent interprets requests, selects tools, follows jobs, and presents actual results. Fixed pages and Agent mode share registered components and operations, with reference-based views composed in the main workspace.
 
 The current fixed page queries event indexes only: **no events does not mean no continuous footage**. Continuous playback has been independently exercised, but receiving an end frame does not prove gap-free coverage.
 Natural-language export is available through the local [Agent entry](agent/README.md), separately from the fixed page. Continuous monitoring and video-content recognition are not implemented.
@@ -152,7 +152,7 @@ This project uses the [MIT License](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD
 
 面向 Agent 的 eufy 能力平台：把登录、设备发现、录像查询与导出封装成独立能力，提供统一 CLI/API 和本地 Agent；更多界面待实现。
 
-**当前版本已提供常驻录像 API。** 登录、设备列表与事件录像页面继续可用。[v1 API](api/v1.md) 将已支持的连续录像路径接入持久化任务和完整媒体校验，明确区分完整、部分与失败结果。[CLI](cli/README.md) 已通过同一常驻 API 提供登录、设备、连续录像任务和产物下载。[录像 Agent](agent/README.md) 已加入本地单 Agent SDK 运行时和结构化 HTTP 工具；[新的实机记录](agent/VALIDATION.md) 已产出可播放的 partial 视频，媒体校验通过，但录像覆盖不完整。[Agent 侧栏](interface/agent/README.md) 已与固定浏览共用设备、时间轴、播放器和任务结果；动态工作区仍待实现。
+**当前版本已提供常驻录像 API。** 登录、设备列表与事件录像页面继续可用。[v1 API](api/v1.md) 将已支持的连续录像路径接入持久化任务和完整媒体校验，明确区分完整、部分与失败结果。[CLI](cli/README.md) 已通过同一常驻 API 提供登录、设备、连续录像任务和产物下载。[录像 Agent](agent/README.md) 已加入本地单 Agent SDK 运行时和结构化 HTTP 工具；[新的实机记录](agent/VALIDATION.md) 已产出可播放的 partial 视频，媒体校验通过，但录像覆盖不完整。[Agent 侧栏](interface/agent/README.md) 已与固定浏览共用设备、时间轴、播放器和任务结果；[动态工作区](interface/workspace/README.md) 已支持 Agent 组合、固定、排序和从当前 API 数据恢复。
 
 ### 目前可以做什么
 
@@ -164,7 +164,7 @@ This project uses the [MIT License](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD
 | 同上 `continuous.cjs` / `mux.py` | 连续时段查询、按时间回放、带时间戳的原始帧捕获 | 实验性；短片实测，长片完整性待验收 |
 | [capabilities/live](capabilities/live) | 实时视频能力归属 | 待封装、待实测 |
 | [api](api) | 常驻 v1 录像任务与原页面协议 | 设备/范围/任务/产物契约；保留旧页面 |
-| [interface](interface) | 固定登录、设备、事件录像和播放器页面 | 固定浏览和 Agent 侧栏可运行；动态工作区待实现 |
+| [interface](interface) | 固定登录、设备、事件录像和播放器页面 | 固定浏览、Agent 侧栏和可恢复动态工作区可运行 |
 | [jobs](jobs) | 持久化任务标识、状态、HomeBase 排队与独立产物目录 | Phase A 模块已通过离线测试；服务和录像接入、Phase B 恢复能力待完成 |
 | [cli](cli) | 常驻服务的 HTTP 命令行客户端 | 可运行登录、设备、录像范围/导出、任务与产物命令 |
 | [agent](agent) | 单 Agent SDK 与常驻 HTTP 结构化工具 | 已记录新的真实模型到实机流程；视频可播放，结果为覆盖不完整的 partial |
@@ -243,7 +243,7 @@ interface/
   pages/                   固定功能页面
   components/              共享设备/任务卡片、播放器、时间轴
   agent/                   常驻对话接口与侧栏
-  workspace/               后续动态结果组合、固定与恢复
+  workspace/               注册组件结果组合、固定与恢复
 vendor/eufy-security-client/ 带必要本地补丁的协议源码
 docs/                      架构、迁移清单与工作项
 output/                    运行时导出文件，不提交 Git

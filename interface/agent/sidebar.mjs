@@ -1,10 +1,12 @@
 import { createResults } from '/assets/results.mjs';
+import { mountWorkspace } from '/assets/workspace.mjs';
 
 export function mountSidebar({ document, window, i18n, fetch, storage }) {
   const el = id => document.getElementById(id), t = (key, params, fallback) => i18n.t(key, params, fallback);
   const results = createResults({ document, i18n });
   let state, inventory, pollError, submitError, polling = false, sending = false, pending;
-  let mode = 'fixed', responseLocale = 'auto', receiptKey = '', deviceKey = '', turnKey = '', noticeKey = '';
+  let mode = 'fixed', responseLocale = 'auto', turnKey = '', noticeKey = '';
+  const workspace = mountWorkspace({ document, i18n, storage, fetch, onChange: () => poll() });
   try {
     mode = storage?.getItem('eufy-agent-hub.mode') === 'agent' ? 'agent' : 'fixed';
     responseLocale = storage?.getItem('eufy-agent-hub.responseLocale') || 'auto';
@@ -57,31 +59,14 @@ export function mountSidebar({ document, window, i18n, fetch, storage }) {
         return item;
       }));
     }
-    const nextDeviceKey = JSON.stringify([inventory, i18n.locale]);
-    if (deviceKey !== nextDeviceKey) {
-      deviceKey = nextDeviceKey;
-      el('shared-devices').replaceChildren(...(inventory?.devices || []).map(results.device));
-      el('device-status').textContent = inventory?.error ? errorText(inventory.error) : '';
-    }
-    const nextReceiptKey = JSON.stringify([state?.receipts, i18n.locale]);
-    if (receiptKey !== nextReceiptKey) {
-      receiptKey = nextReceiptKey;
-      el('shared-timelines').replaceChildren(...(state?.receipts || []).map(receipt => results.timeline({
-        window: receipt.window, ranges: receipt.ranges, label: `${receipt.device.name} · ${receipt.serial}`,
-      })));
-    }
-    el('job-status').textContent = (state?.jobs || []).filter(view => !view.job && view.error).map(view => errorText(view.error)).join('\n');
-    for (const view of state?.jobs || []) {
-      if (!view.job) continue;
-      const existing = [...el('shared-jobs').children].find(card => card.dataset.job === view.job.jobId);
-      if (existing) results.updateJob(existing, view); else el('shared-jobs').append(results.job(view));
-    }
+    workspace.update(state, inventory, pollError);
   }
   async function poll() {
     if (polling) return;
     polling = true;
     try {
-      const response = await fetch('/interface/agent/state');
+      const ids = workspace.jobIds();
+      const response = await fetch('/interface/agent/state' + (ids.length ? '?' + new URLSearchParams(ids.map(id => ['jobId', id])) : ''));
       const body = await response.json();
       if (!response.ok) throw body.error;
       state = body; pollError = undefined;

@@ -6,13 +6,14 @@ const { parseHTML } = require('linkedom');
 async function setup(options = {}) {
   const { createI18n } = await import('../i18n/i18n.mjs');
   const { createResults } = await import('../components/results.mjs');
+  const { mountWorkspace } = await import('../workspace/workspace.mjs');
   const { document, window } = parseHTML(fs.readFileSync(path.join(__dirname, '../pages/local-login.html'), 'utf8'));
   // linkedom exposes a read-only select.value; supply the browser's writable boundary.
   for (const select of document.querySelectorAll('select')) Object.defineProperty(select, 'value', { writable: true, value: 'auto' });
   const i18n = createI18n({ catalogs: Object.fromEntries(['en', 'zh-CN'].map(locale => [locale,
     JSON.parse(fs.readFileSync(path.join(__dirname, `../i18n/ui.${locale}.json`)))])) });
   const source = fs.readFileSync(path.join(__dirname, 'sidebar.mjs'), 'utf8').replace(/^import .*;\r?\n/gm, '').replace('export function', 'function');
-  const mountSidebar = new Function('createResults', source + '; return mountSidebar;')(createResults);
+  const mountSidebar = new Function('createResults', 'mountWorkspace', source + '; return mountSidebar;')(createResults, mountWorkspace);
   const stored = options.stored || new Map();
   const storage = { getItem: key => stored.get(key), setItem: (key, value) => stored.set(key, value) };
   const state = { turns: [], receipts: [], jobs: [], notices: [], busy: false };
