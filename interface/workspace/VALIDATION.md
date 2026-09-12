@@ -1,0 +1,33 @@
+# Workspace validation — Issue 14
+
+Validated on Windows with Node 24 and the installed OpenAI Agents SDK 0.18.0. `npm ci`, `npm run setup`, `npm run build` and the final configured `npm test` passed: **261 passed, 0 failed, 0 skipped**. The configured Python/PyAV and FFmpeg dependencies were available; no test was skipped for missing media tools.
+
+Eight workspace behavior tests cover the reference-only contract, all four registered types, mixed unknown/unusable descriptors, original names and service windows, pin/unpin/order persistence, stale-to-current data rehydration, missing device/receipt/job/artifact recovery, localized service errors, shared receipt export, registered downloads and unchanged video identity through polling/reorder/language changes. A new Agent composition updates unpinned order while retaining user pins and existing video nodes.
+
+The integration test uses the actual installed SDK `ScriptedModel`, root runtime, HTTP tools and resident server. It calls devices/ranges/export/artifacts/presentation tools, then renders all four types plus an unknown sibling with the actual workspace renderer. Repeated UI export requests reuse one resident job and capture. After stopping the resident, deleting only the test conversation history and restarting on the same origin while logged out, restored pinned job/artifact references load the existing durable job from v1. Missing receipts/devices explain their unavailable state. Polling and restoring make no model calls. Existing auth, sidebar deduplication/ownership, event, service-window, job and real-media regression tests pass unchanged.
+
+## Actual Chrome observations
+
+An isolated dynamically assigned local fixture ran the real resident, installed SDK and production page with synthetic inventory/capture. Its three-second generated test-card MP4 loaded at readyState 4. The fixture-only media probe assigns per-page node identities and loops muted synthetic clips so continuity can be observed.
+
+The browser submitted original requests through the actual sidebar; SDK tool calls composed device-list, timeline, job-card, player and an unknown fallback. Pinning all five views, moving the player, changing EN to Chinese and switching to fixed browsing retained the same playing video node (`id=1`, `paused=false`) and registered URL. Unpinning the unknown view and refreshing restored the four pinned references in the chosen order. The diagnostic storage display contained references only. Both fixed/Agent receipt-export buttons reused the original job: capture/range counters remained one and model calls remained eight. Fixed event query and download used the existing service and actual FFmpeg; its shared player played and stayed playing on locale change.
+
+Logout and browser refresh retained job/player views and showed the localized normal-login prompt for the pinned device view. Logging in again restored device data through polling. Later explicit synthetic requests for CAMERA002 and CAMERA003 preserved prior pins; the CAMERA003 job was observed running at 5%, then after pin/reorder/refresh showed the API's partial result with the same job ID. Three explicitly requested camera exports produced exactly three captures/range calls; there were 18 scripted model calls across four submitted turns.
+
+Desktop and 390x844 viewport checks covered English and Chinese. The narrow document client/scroll widths were both 375 pixels (the remaining width is the browser scrollbar); controls wrapped without horizontal overflow. Screenshots and DOM were inspected. Browser console messages were warnings from an unrelated installed extension; no application errors were observed. The temporary viewport was reset, test tab closed and owned fixture stopped. The existing resident service was preserved.
+
+## Reproduce and limits
+
+Use [the synthetic browser fixture instructions](../agent/VALIDATION.md#reproduce-the-browser-fixture). After normal synthetic login, queue `{"scenario":"workspace"}` before a sidebar request explicitly naming Synthetic camera and the fixture window. After its job finishes, queue `{"scenario":"workspace-player"}` before asking to display the existing player. `{"scenario":"snapshot"}` reads counters without queuing a model reply. The fixture's diagnostics disclosure shows reference storage and media readiness/identity. Optional `window.device` may select another explicitly named synthetic serial. Fixture code is never loaded by production.
+
+This validates interface behavior with synthetic media and scripted model outputs, not new hardware coverage, paid model quality or full continuous coverage. The fixture injects partial job metadata honestly; playable is not complete. Stored layout is local to an origin. Browsers without state-preserving `moveBefore` retain video nodes but may pause media during a reorder; actual Chrome playback continuity was verified.
+
+## Accepted-export failure regression
+
+The first independent review found that a prior composition could hide a later accepted export if the next model request failed before presenting it. Job-reference registration now lives in the shared `RecordingTools.submit` completion path, used by both SDK recording_export and UI receipt export. It appends only the accepted stable job-card reference and preserves prior composition and user pins; no export identity or renderer logic changes.
+
+Two actual installed-SDK/resident/renderer tests first failed because the accepted running job had no card, then passed after the fix. They cover a provider exception and the runtime's real one-second abort deadline, three subsequent status polls, page re-mount from saved pin order, original composition retention, and repeating the UI receipt export without a second capture or duplicate card. Focused validation passed 51 tests; the full configured suite passed 261 with zero skips.
+
+A new isolated Chrome fixture repeated the provider-failure case: a pinned device-only presentation was followed by an explicit export, then a scripted provider exception before another presentation call. The failed-turn message and running 5% job were visible together. Switching to fixed browsing and refreshing retained the same job, now partial with a registered player, beside the original pin. Counters remained one range query, one capture and five scripted model calls. The test tab and owned fixture were closed; the original service was preserved.
+
+To reproduce this browser regression, queue `{"scenario":"workspace-devices"}` before a show-devices message, pin that result, then queue `{"scenario":"export-present-failed"}` before the explicit fixture export request. The latter throws only after the actual recording_export tool has returned an accepted job.

@@ -27,10 +27,11 @@ test('local HTTP server serves the migrated page on its configured port without 
   const origin = `http://127.0.0.1:${server.address().port}`;
   const page = await fetch(origin);
   assert.equal(page.status, 200); assert.match(await page.text(), /data-i18n="ui.title"/);
-  for (const script of ['i18n.mjs', 'local-login.mjs']) {
+  for (const script of ['i18n.mjs', 'local-login.mjs', 'results.mjs', 'sidebar.mjs', 'workspace.mjs', 'contract.mjs']) {
     const response = await fetch(origin + '/assets/' + script);
     assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /javascript/);
   }
+  assert.equal((await fetch(origin + '/components/results.mjs')).status, 200);
   const english = await (await fetch(origin + '/locales/en.json')).json();
   const chinese = await (await fetch(origin + '/locales/zh-CN.json')).json();
   assert.equal(english['ui.login'], 'Sign in'); assert.equal(chinese['ui.login'], '登录');

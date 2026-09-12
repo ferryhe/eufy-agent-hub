@@ -18,7 +18,7 @@ The normal entry stores history, normalization receipts and request identities a
 
 ## Tools and semantics
 
-Tools: `session_status`, `devices_list`, `device_resolve`, `device_capability`, `recording_ranges`, `recording_export`, `job_get`, `job_artifacts`. Responses are checked against the resident's `/api/v1/contract`. Authority: [v1 API](../api/v1.md).
+Tools: `session_status`, `devices_list`, `device_resolve`, `device_capability`, `recording_ranges`, `recording_export`, `job_get`, `job_artifacts`, `workspace_present`. The presentation tool composes existing references using the [workspace contract](../interface/workspace/README.md), without running exports or generated page code. Service responses are checked against the resident's `/api/v1/contract`. Authority: [v1 API](../api/v1.md).
 
 Names match exactly ignoring case/surrounding whitespace. Unknown/repeated names require clarification. The runtime checks that the caller named the selected device/serial, or that the service uniquely resolved its ID from a caller-supplied name. That saved selection can pass to later tools and resumed turns; listing candidates or an ambiguous lookup never grants a selection. The model cannot silently pick an ambiguous candidate. Eligibility (`recordingExport.supported`) is separate from firmware-specific verification. Unknown Live is not an export blocker.
 

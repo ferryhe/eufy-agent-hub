@@ -144,7 +144,15 @@ class RecordingTools {
     const receipt = this.state.receipts[receiptId];
     if (!receipt) return fail('NORMALIZATION_REQUIRED', 'First obtain a recording_ranges receipt from this session.');
     if (this.pending.has(receiptId)) return this.pending.get(receiptId);
-    const operation = this.submitReceipt(receipt);
+    const operation = this.submitReceipt(receipt).then(result => {
+      // Accepted work stays discoverable even if the next model request fails.
+      if (result.job && this.state.presentation) {
+        const item = { type: 'job-card', jobId: result.job.jobId };
+        if (!this.state.presentation.views.some(v => v.type === item.type && v.jobId === item.jobId)) this.state.presentation.views.push(item);
+        this.save();
+      }
+      return result;
+    });
     this.pending.set(receiptId, operation);
     try { return await operation; } finally { this.pending.delete(receiptId); }
   }

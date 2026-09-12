@@ -10,7 +10,8 @@ const begin = 1787862600, end = begin + 60;
 async function fixture(options = {}) {
   const root = path.join(__dirname, '../..', 'output');
   fs.mkdirSync(root, { recursive: true });
-  const directory = fs.mkdtempSync(path.join(root, 'eufy-agent-'));
+  const directory = options.directory || fs.mkdtempSync(path.join(root, 'eufy-agent-'));
+  fs.mkdirSync(directory, { recursive: true });
   let valid = true;
   const cameras = options.devices || [{ device_sn: 'CAMERA001', device_name: 'Synthetic camera' }];
   const raw = [{ device_sn: 'base', device_model: 'T8030', device_type: DeviceType.HB3, device_name: 'Synthetic base', local_ip: '192.0.2.1' },
@@ -24,7 +25,7 @@ async function fixture(options = {}) {
       return { code: 0 };
     }, sendVerifyCode: async () => ({ code: 0 }), generateCaptcha: async () => ({ captcha_id: 'fixture', item: 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="180" height="60"><rect width="180" height="60" fill="#eff6ff"/><text x="12" y="40" font-size="32">DEMO</text></svg>').toString('base64') }), getDevsListDecrypted: async () => ({ devices: raw }) }));
   if (!options.loggedOut) await session.login({ email: 'fixture@example.test', password: 'offline-only', country: 'CA' });
-  const server = createServer({ port: 0, session, agent: { statePath: path.join(directory, 'interface.json'), model: options.model }, recordings: options.recordings || { close() {} }, outputRoot: directory,
+  const server = createServer({ port: options.port ?? 0, session, agent: { statePath: path.join(directory, 'interface.json'), model: options.model, runTimeoutMs: options.runTimeoutMs }, recordings: options.recordings || { close() {} }, outputRoot: directory,
     capabilityRecordsPath: path.join(directory, 'verification.json'),
     createRanges: () => ({ close() {}, listRange: async () => {
       calls.ranges++;
@@ -58,6 +59,6 @@ async function fixture(options = {}) {
   });
   await new Promise(resolve => server.start(resolve));
   return { directory, calls, session, server, url: `http://127.0.0.1:${server.address().port}`, expire: () => { valid = false; },
-    async close() { await new Promise(resolve => server.close(resolve)); await server.shutdown(); fs.rmSync(directory, { recursive: true, force: true }); } };
+    async close() { await new Promise(resolve => server.close(resolve)); await server.shutdown(); if (!options.directory) fs.rmSync(directory, { recursive: true, force: true }); } };
 }
 module.exports = { fixture, window };
