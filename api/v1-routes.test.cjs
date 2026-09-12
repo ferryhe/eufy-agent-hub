@@ -117,6 +117,77 @@ function capabilityObservation(scope, capability, status = 'verified') {
     evidence: [{ source: 'offline-api-fixture', observedAt: '2026-09-11', outcome: 'partial' }] };
 }
 
+test('device discovery HTTP responses deduplicate capped inventory and expose unverified completeness', async t => {
+  const f = await fixture(t); await f.login();
+  f.api.getDevsListDecrypted = async () => ({ devices: Array.from({ length: 100 }, (_, i) => ({
+    device_sn: `fixture-${i % 99}`, device_model: 'FUTURE_MODEL',
+  })) });
+  for (const [route, schema] of [['/api/v1/devices', 'devices'], ['/api/v1/devices/fixture-0', 'deviceResponse'],
+    ['/api/v1/devices/fixture-0/capabilities/rtsp', 'capabilityResponse']]) {
+    const { status, value } = await f.json(route, undefined, schema);
+    assert.equal(status, 200);
+    assert.equal(value.discovery.status, 'succeeded');
+    assert.equal(value.discovery.completeness, 'unknown');
+    assert.equal(value.discovery.pagination, 'unverified');
+    assert.equal(value.discovery.limitReached, true);
+    assert.equal(value.discovery.receivedCount, 100);
+    assert.equal(value.discovery.uniqueCount, 99);
+    if (value.devices) {
+      assert.equal(value.devices.length, 99);
+      assert.equal(value.devices[98].model, 'FUTURE_MODEL');
+    }
+  }
+  const missing = await f.json('/api/v1/devices/not-returned');
+  assert.equal(missing.status, 404);
+  assert.equal(missing.value.discovery.completeness, 'unknown');
+});
+
+test('device discovery HTTP failures expose incomplete retryable status and clear it after retry', async t => {
+  const f = await fixture(t); await f.login();
+  for (const response of [null, { devices: [{}] }]) {
+    f.api.getDevsListDecrypted = async () => {
+      if (response === null) throw new Error('offline inventory failure');
+      return response;
+    };
+    const failed = await f.json('/api/v1/devices');
+    assert.equal(failed.status, 503);
+    assert.equal(failed.value.error.code, 'DEVICE_UNAVAILABLE');
+    assert.equal(failed.value.discovery.status, 'failed');
+    assert.equal(failed.value.discovery.completeness, 'incomplete');
+    assert.equal(failed.value.discovery.failedPage, 1);
+    assert.equal(failed.value.discovery.retryable, true);
+  }
+  f.api.getDevsListDecrypted = async () => ({ devices: f.raw });
+  const retried = await f.json('/api/v1/devices', undefined, 'devices');
+  assert.equal(retried.status, 200);
+  assert.equal(retried.value.discovery.status, 'succeeded');
+  assert.equal(retried.value.discovery.completeness, 'unknown');
+  assert.equal(retried.value.discovery.retryable, false);
+});
+
+test('device discovery preserves the capped read facts when the later verification-record stage fails', async t => {
+  let fail = true;
+  const f = await fixture(t, { deviceRepository: { read() {
+    if (fail) throw new Error('offline record store failure');
+    return { records: [], reachability: [] };
+  } } });
+  await f.login();
+  f.api.getDevsListDecrypted = async () => ({ devices: Array.from({ length: 100 }, (_, i) => ({ device_sn: `fixture-${i}` })) });
+  const failed = await f.json('/api/v1/devices');
+  assert.equal(failed.status, 503);
+  assert.equal(failed.value.error.code, 'CAPABILITY_RECORDS_UNAVAILABLE');
+  assert.equal(failed.value.discovery.status, 'failed');
+  assert.equal(failed.value.discovery.completeness, 'incomplete');
+  assert.equal(failed.value.discovery.pagesRead, 1);
+  assert.equal(failed.value.discovery.uniqueCount, 100);
+  assert.equal(failed.value.discovery.failedPage, null);
+  assert.equal(failed.value.discovery.limitReached, true);
+  assert.equal(failed.value.discovery.retryable, true);
+  assert.ok(failed.value.discovery.reasons.includes('capability_records_unavailable'));
+  fail = false;
+  assert.equal((await f.json('/api/v1/devices', undefined, 'devices')).value.discovery.status, 'succeeded');
+});
+
 test('HTTP operator cancel is local, persists pending cleanup, preserves FIFO and exposes cancelled evidence', async t => {
   let entered, release;
   const ready = new Promise(resolve => { entered = resolve; }), cleanup = new Promise(resolve => { release = resolve; });

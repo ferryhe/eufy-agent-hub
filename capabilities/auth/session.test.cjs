@@ -79,6 +79,57 @@ test('inventory failure preserves login and devices, and can be retried', async 
   assert.equal(calls.length, 1);
 });
 
+test('session and capability entry points expose unknown completeness even for short and capped inventories', async () => {
+  const { getDevices, refreshDevices } = require('../devices/index.cjs');
+  const { session, api } = harness();
+  assert.equal(session.state.discovery.status, 'not_requested');
+  await session.login(credentials);
+  assert.equal(session.state.discovery.completeness, 'unknown');
+  assert.equal(session.state.discovery.status, 'succeeded');
+  api.getDevsListDecrypted = async () => ({ devices: Array.from({ length: 100 }, (_, i) => ({
+    device_sn: `fixture-${i % 99}`, device_model: 'FUTURE_MODEL',
+  })) });
+  const result = await refreshDevices(session);
+  assert.equal(result.devices.length, 99);
+  assert.equal(result.devices[98].model, 'FUTURE_MODEL');
+  assert.equal(result.discovery.completeness, 'unknown');
+  assert.equal(result.discovery.limitReached, true);
+  assert.equal(result.discovery.receivedCount, 100);
+  assert.equal(result.discovery.uniqueCount, 99);
+  result.discovery.reasons.push('mutated');
+  assert.ok(!getDevices(session).discovery.reasons.includes('mutated'));
+  api.getDevsListDecrypted = async () => ({ devices: [] });
+  await session.refresh();
+  assert.equal(session.state.discovery.completeness, 'unknown');
+  assert.equal(session.state.discovery.uniqueCount, 0);
+  session.logout();
+  assert.equal(session.state.discovery.status, 'not_requested');
+});
+
+test('failed session refresh marks retained devices stale and incomplete until a successful retry', async () => {
+  const { session, api } = harness();
+  await session.login(credentials);
+  api.getDevsListDecrypted = async () => { throw new Error('offline inventory failure'); };
+  await session.refresh();
+  assert.equal(session.state.devices.length, 2);
+  assert.equal(session.state.discovery.status, 'failed');
+  assert.equal(session.state.discovery.completeness, 'incomplete');
+  assert.equal(session.state.discovery.failedPage, 1);
+  assert.equal(session.state.discovery.retryable, true);
+  assert.equal(session.state.discovery.stale, true);
+  assert.equal(session.state.discovery.uniqueCount, 0);
+  api.getDevsListDecrypted = async () => ({ devices: [{ device_sn: 'new' }] });
+  await session.refresh();
+  assert.equal(session.state.discovery.status, 'succeeded');
+  assert.equal(session.state.discovery.completeness, 'unknown');
+  assert.equal(session.state.discovery.stale, false);
+  assert.equal(session.state.discovery.retryable, false);
+  assert.equal(session.state.discovery.failedPage, null);
+  api.hasValidSession = () => false;
+  session.isAuthenticated();
+  assert.equal(session.state.discovery.status, 'not_requested');
+});
+
 test('invalid inventory is reported instead of claiming no devices', async () => {
   const { session, api } = harness();
   api.getDevsListDecrypted = async () => ({ unexpected: [] });

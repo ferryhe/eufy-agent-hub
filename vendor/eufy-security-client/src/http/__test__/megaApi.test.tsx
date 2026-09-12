@@ -218,6 +218,34 @@ describe("MegaHTTPApi", () => {
     });
   });
 
+  describe("retained Mega inventory request boundary", () => {
+    beforeEach(() => {
+      jest.spyOn(MegaHTTPApi.prototype, "keyExchange").mockResolvedValue(fakeIdentity());
+    });
+
+    it("uses only the known request fields, returns unknown models, and does not invent a continuation at 100 entries", async () => {
+      const inventory = { devices: Array.from({ length: 100 }, (_, i) => ({
+        device_sn: `fixture-${i}`, device_model: "UNKNOWN_MODEL",
+      })) };
+      const { api, requests } = await makeApi([{ statusCode: 200, body: JSON.stringify({
+        code: 0, msg: "success!",
+        data: megaEncryptBody(JSON.stringify(inventory), sharedKeyToAesKey(fakeIdentity().sharedKey)),
+      }) }]);
+      expect(await api.getDevsListDecrypted()).toEqual(inventory);
+      expect(requests).toHaveLength(1);
+      expect(requests[0].url).toBe("https://app-house-eu-pr.eufy.com/app/house/get_devs_list");
+      expect(JSON.parse(megaDecrypt(requests[0].body!, fakeIdentity().sharedKey)))
+        .toEqual({ device_sn: "", num: 100, orderby: "" });
+    });
+
+    it("propagates a failed inventory request instead of manufacturing an empty list", async () => {
+      const { api, requests } = await makeApi([{ statusCode: 200,
+        body: JSON.stringify({ code: 4404, msg: "offline fixture failure" }) }]);
+      await expect(api.getDevsListDecrypted()).rejects.toThrow("get_devs_list failed: 4404");
+      expect(requests).toHaveLength(1);
+    });
+  });
+
   describe("login + 2FA flow", () => {
     beforeEach(() => {
       jest.spyOn(MegaHTTPApi.prototype, "keyExchange").mockImplementation(async function (
