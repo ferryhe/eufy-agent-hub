@@ -5,6 +5,7 @@ const path = require('node:path');
 
 async function pageHarness() {
   const { createI18n } = await import('../i18n/i18n.mjs');
+  const { createResults } = await import('../components/results.mjs');
   const catalogs = Object.fromEntries(['en', 'zh-CN'].map(locale => [locale, {
     ...JSON.parse(fs.readFileSync(path.join(__dirname, `../i18n/ui.${locale}.json`), 'utf8')),
     ...JSON.parse(fs.readFileSync(path.join(__dirname, `../i18n/service.${locale}.json`), 'utf8')),
@@ -35,11 +36,11 @@ async function pageHarness() {
   // Exercise the real page controller and catalogs. Only browser DOM/network
   // boundaries are replaced; full DOM and video behavior has browser coverage.
   const source = fs.readFileSync(path.join(__dirname, 'local-login.mjs'), 'utf8')
-    .replace(/^import \{ createI18n \} from '\/assets\/i18n\.mjs';\r?\n/, '');
+    .replace(/^import .*;\r?\n/gm, '');
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const controller = await new AsyncFunction('createI18n', 'document', 'window', 'navigator', 'fetch', 'setInterval',
+  const controller = await new AsyncFunction('createI18n', 'createResults', 'mountSidebar', 'document', 'window', 'navigator', 'fetch', 'setInterval',
     source + '\nreturn { submit, refresh, recordingAction, refreshRecordings };')(
-    createI18n,
+    createI18n, createResults, () => ({ render() {} }),
     { getElementById: node, documentElement: {}, querySelectorAll: () => [] },
     { addEventListener() {} }, { languages: ['en'] }, fetch, () => {},
   );
@@ -128,4 +129,16 @@ test('unchanged status polls retain validation errors and language changes trans
   page.selectLanguage('zh-CN');
   assert.equal(page.node('status').textContent, page.catalogs['zh-CN']['ui.error.credentials']);
   assert.equal(page.node('recording-message').textContent, page.catalogs['zh-CN']['service.recordings.invalidEndTime']);
+});
+
+for (const channel of ['auth', 'recordings']) test(`${channel} renders structured v1 ownership errors from shared resident operations`, async () => {
+  const page = await pageHarness();
+  page.setPost(() => page.response({ error: { code: 'SERVICE_BUSY', message: 'A recording operation owns the current session.' } }, false));
+  if (channel === 'auth') await page.submit('/refresh', {});
+  else await page.recordingAction('/recordings/query', {});
+  const status = page.node(channel === 'auth' ? 'status' : 'recording-message');
+  assert.match(status.textContent, /resident is busy/);
+  assert.doesNotMatch(status.textContent, /SERVICE_BUSY/);
+  assert.doesNotMatch(status.textContent, /\[object Object\]/);
+  page.selectLanguage('zh-CN'); assert.match(status.textContent, /本地服务正在执行其他操作/);
 });

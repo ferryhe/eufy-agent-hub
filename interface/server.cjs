@@ -8,6 +8,7 @@ const { installRecordingRoutes } = require('../api/legacy-recording-routes.cjs')
 const { installV1Routes } = require('../api/v1-routes.cjs');
 const { errorBody, serviceError } = require('../api/messages.cjs');
 const { validateRequest } = require('../api/v1-contract.cjs');
+const { installAgentRoutes } = require('./agent/http.cjs');
 
 function createServer(options = {}) {
   const port = Number(options.port ?? process.env.EUFY_PORT ?? 3187);
@@ -32,7 +33,8 @@ function createServer(options = {}) {
       : errorBody(serviceError(message, key)));
     if (req.headers.host !== new URL(origin).host) return reject(403, '请使用本地链接。', 'ui.error.localLink');
     if (req.method === 'GET' && route === '/') return send(200, fs.readFileSync(path.join(__dirname, 'pages/local-login.html')), 'text/html; charset=utf-8');
-    const scripts = { '/assets/i18n.mjs': 'i18n/i18n.mjs', '/assets/local-login.mjs': 'pages/local-login.mjs' };
+    const scripts = { '/assets/i18n.mjs': 'i18n/i18n.mjs', '/assets/local-login.mjs': 'pages/local-login.mjs',
+      '/assets/results.mjs': 'components/results.mjs', '/assets/sidebar.mjs': 'agent/sidebar.mjs' };
     if (req.method === 'GET' && Object.hasOwn(scripts, route)) return send(200, fs.readFileSync(path.join(__dirname, scripts[route])), 'text/javascript; charset=utf-8');
     const locale = { '/locales/en.json': 'en', '/locales/zh-CN.json': 'zh-CN' }[route];
     if (req.method === 'GET' && locale) {
@@ -105,8 +107,9 @@ function createServer(options = {}) {
     deviceRepository: options.deviceRepository,
   });
   const isBusy = () => busy || recordingRoutes.state.busy || v1.isBusy();
+  const agentRoutes = installAgentRoutes(server, { getOrigin, ...options.agent });
   let shutdown;
-  server.shutdown = () => shutdown ||= v1.shutdown().finally(() => {
+  server.shutdown = () => shutdown ||= agentRoutes.shutdown().then(() => v1.shutdown()).finally(() => {
     recordingRoutes.recordings.close();
     session.close?.();
   });
@@ -123,12 +126,18 @@ if (require.main === module) {
   server.start(() => console.log(`Eufy login ready: http://127.0.0.1:${server.address().port}`));
   // The protocol library may retain UDP handles after closing its station.
   // Only the standalone entry point owns the process lifetime.
-  const stop = () => server.close(async () => {
-    try { await server.shutdown(); process.exit(0); }
-    catch (error) { console.error(error); process.exit(1); }
-  });
-  process.once('SIGINT', stop);
-  process.once('SIGTERM', stop);
+  let stopping = false;
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    server.close(async () => {
+      try { await server.shutdown(); process.exit(0); }
+      catch (error) { console.error(error); process.exit(1); }
+    });
+  };
+  // Keep the owner visible while draining; SDK signal cleanup defers to it.
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
 }
 
 module.exports = { createServer };
