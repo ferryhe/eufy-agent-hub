@@ -111,6 +111,7 @@ function createServer(options = {}) {
     capabilityRecordsPath: options.capabilityRecordsPath ?? process.env.EUFY_CAPABILITY_RECORDS_PATH,
     deviceRepository: options.deviceRepository,
     playback: options.playback,
+    live: options.live,
   });
   const isBusy = () => busy || recordingRoutes.state.busy || v1.isBusy();
   const agentRoutes = installAgentRoutes(server, { getOrigin, ...options.agent });
@@ -136,8 +137,10 @@ if (require.main === module) {
   const stop = () => {
     if (stopping) return;
     stopping = true;
+    // End streaming responses before waiting for HTTP connections to drain.
+    const shutdown = server.shutdown(); shutdown.catch(() => {});
     server.close(async () => {
-      try { await server.shutdown(); process.exit(0); }
+      try { await shutdown; process.exit(0); }
       catch (error) { console.error(error); process.exit(1); }
     });
   };

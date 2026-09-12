@@ -18,7 +18,10 @@ const errorCodes = ['UNAUTHENTICATED', 'UNSUPPORTED_DEVICE', 'DEVICE_UNAVAILABLE
   'INTERNAL_ERROR', 'PARTIAL_RECORDING', 'EXPORT_FAILED', 'JOB_CANCELLED', 'JOB_INTERRUPTED', 'LOGIN_REQUIRED', 'CAPABILITY_RECORDS_UNAVAILABLE',
   'PLAYBACK_SESSION_NOT_FOUND', 'CONTROL_NOT_VERIFIED', 'CONTROL_INACTIVE', 'CONTROL_SCOPE_CHANGED', 'CONTROL_CONTEXT_UNAVAILABLE',
   'CONTROL_CONNECTION_LOST', 'CONTROL_REJECTED', 'CONTROL_RESPONSE_INVALID', 'CONTROL_SEND_FAILED', 'CONTROL_TIMEOUT',
-  'CONTROL_STARTUP_TIMEOUT', 'CONTROL_MEDIA_TIMEOUT', 'CONTROL_CLEANUP_FAILED', 'PAUSE_MEDIA_ADVANCED'];
+  'CONTROL_STARTUP_TIMEOUT', 'CONTROL_MEDIA_TIMEOUT', 'CONTROL_CLEANUP_FAILED', 'PAUSE_MEDIA_ADVANCED',
+  'LIVE_SESSION_NOT_FOUND', 'LIVE_REQUEST_CONFLICT', 'LIVE_CLIENT_CONFLICT', 'LIVE_UNSUPPORTED', 'LIVE_CAPABILITY_UNKNOWN',
+  'LIVE_DEVICE_OFFLINE', 'LIVE_SCOPE_CHANGED', 'LIVE_CONNECTION_FAILED', 'LIVE_CONNECTION_LOST', 'LIVE_COMMAND_REJECTED',
+  'LIVE_COMMAND_TIMEOUT', 'LIVE_MEDIA_TIMEOUT', 'LIVE_RUNTIME_UNAVAILABLE', 'LIVE_DECODER_FAILED', 'LIVE_CLEANUP_FAILED', 'LIVE_INACTIVE'];
 const error = object({ code: { enum: errorCodes }, message: string });
 const discovery = object({ status: { enum: ['not_requested', 'succeeded', 'failed'] },
   completeness: { enum: ['unknown', 'incomplete'] }, pagination: { const: 'unverified' },
@@ -76,6 +79,21 @@ const contract = {
     export: object({ requestId: nonempty, serial: nonempty, ...time }, ['requestId', 'serial', 'day', 'start', 'end']),
     playbackStart: object({ serial: nonempty, ...time, speed: { type: 'number' } }, ['serial', 'day', 'start', 'end']),
     playbackResponse: object({ playback }),
+    liveStart: object({ serial: nonempty, requestId: nonempty, maxDurationMs: { type: 'integer', minimum: 1000, maximum: 60000 } }, ['serial', 'requestId']),
+    liveResponse: object({ live: { $ref: '#/definitions/live' }, reused: { type: 'boolean' } }, ['live']),
+    live: object({ sessionId: nonempty, requestId: nonempty, serial: nonempty,
+      state: { enum: ['opening', 'streaming', 'stopping', 'stopped', 'failed'] }, homeBaseId: nullableString,
+      channel: { type: ['integer', 'null'], minimum: 0 }, verificationScope: { anyOf: [deviceSchemas.scope, { type: 'null' }] },
+      capability: { anyOf: [deviceSchemas.capability, { type: 'null' }] }, maxDurationMs: { type: 'integer', minimum: 1000, maximum: 60000 },
+      expiresAtMs: { type: 'integer' }, stopConfirmed: { type: 'boolean' }, cleanupComplete: { type: 'boolean' },
+      resources: object(Object.fromEntries(['protocolClosed', 'connectionClosed', 'decoderClosed', 'streamsClosed'].map(name => [name, { type: 'boolean' }]))),
+      error: { anyOf: [error, { type: 'null' }] }, media: object({ url: nonempty,
+        contentType: { const: 'multipart/x-mixed-replace; boundary=frame' }, decodedFrames: { type: 'integer', minimum: 0 },
+        bytes: { type: 'integer', minimum: 0 }, connected: { type: 'boolean' }, audio: { const: false } }),
+      operations: array(object({ operation: { enum: ['start', 'stop'] }, sentAtMs: { type: 'integer' }, returnCode: { type: ['integer', 'null'] } })),
+      channelChecks: object(Object.fromEntries(['commandMatched', 'commandRejected', 'mediaMatched', 'mediaRejected']
+        .map(name => [name, { type: 'integer', minimum: 0 }]))),
+    }),
     normalizedWindow: window, device, discovery, artifact, job,
     error: object({ error, discovery }, ['error']),
     session: object({ authenticated: { type: 'boolean' }, phase: string, captcha: nullableString, busy: { type: 'boolean' }, loginUrl: { const: '/api/v1/session/login' }, verificationUrl: { const: '/api/v1/session/verify' }, logoutUrl: { const: '/api/v1/session/logout' } }),
@@ -90,7 +108,7 @@ const contract = {
 };
 const ajv = new Ajv({ strict: false });
 ajv.addSchema(contract);
-const validators = Object.fromEntries(['identity', 'retry', 'window', 'export', 'playbackStart', 'login', 'verification', 'empty'].map(name =>
+const validators = Object.fromEntries(['identity', 'retry', 'window', 'export', 'playbackStart', 'liveStart', 'login', 'verification', 'empty'].map(name =>
   [name, ajv.getSchema(`${contract.$id}#/definitions/${name}`)]));
 function validateRequest(name, data) {
   const validate = validators[name];
