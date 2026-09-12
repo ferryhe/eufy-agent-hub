@@ -196,23 +196,136 @@ test('each job owns artifacts and partial diagnostics; duplicate submissions pre
   assert.deepEqual(jobs.get(a.jobId).artifacts.map(item => item.path), ['artifacts/video.mp4', 'partial/capture.log']);
 });
 
-test('reopening unfinished jobs does not replay side effects or silently release their HomeBase', async t => {
-  const gate = deferred();
+test('restart interrupts running work, recovers queued FIFO and never replays failed work', async t => {
   const outputRoot = root(t);
-  const jobs = new JobService({ outputRoot, worker: async () => { await gate.promise; return complete(); } });
+  const jobs = new JobService({ outputRoot, worker: complete });
   const first = jobs.submit(request('first'));
   const second = jobs.submit(request('second'));
-  await new Promise(resolve => setImmediate(resolve));
-  let calls = 0;
-  const reopened = new JobService({ outputRoot, worker: async () => { calls++; return complete(); } });
-  assert.equal(reopened.get(first.jobId).state, 'running');
+  const third = jobs.submit(request('third'));
+  await jobs.whenIdle(); // Stop the previous owner before constructing restart snapshots.
+  fs.writeFileSync(path.join(first.partialDir, 'capture.log'), 'interrupted evidence');
+  fs.writeFileSync(first.metadataPath, JSON.stringify({ ...first, state: 'running', stage: 'receiving', progress: 0.25,
+    result: { outcome: 'partial', diagnostics: [{ stage: 'receiving', message: 'last packet' }] },
+    artifacts: [{ path: 'partial/capture.log', metadata: { role: 'diagnostic' } }] }));
+  fs.writeFileSync(second.metadataPath, JSON.stringify(second));
+  fs.writeFileSync(third.metadataPath, JSON.stringify(third));
+  const calls = [];
+  const reopened = new JobService({ outputRoot, worker: async ({ job }) => { calls.push(job.requestId); return complete(); } });
+  const interrupted = reopened.get(first.jobId);
+  assert.equal(interrupted.state, 'failed');
+  assert.equal(interrupted.stage, 'receiving');
+  assert.equal(interrupted.progress, 0.25);
+  assert.equal(interrupted.error.code, 'JOB_INTERRUPTED');
+  assert.match(interrupted.error.message, /retry/i);
+  assert.equal(interrupted.artifacts[0].path, 'partial/capture.log');
+  assert.deepEqual(interrupted.result.diagnostics, [{ stage: 'receiving', message: 'last packet' }]);
+  assert.equal(fs.readFileSync(path.join(first.partialDir, 'capture.log'), 'utf8'), 'interrupted evidence');
   assert.equal(reopened.get(second.jobId).state, 'queued');
   assert.equal(reopened.submit(request('first')).jobId, first.jobId);
-  assert.throws(() => reopened.submit(request('third')), /unfinished/);
+  const fourth = reopened.submit(request('fourth'));
   await reopened.whenIdle();
-  assert.equal(calls, 0);
-  gate.resolve();
-  await jobs.whenIdle();
+  assert.deepEqual(calls, ['second', 'third', 'fourth']);
+  assert.equal(reopened.get(fourth.jobId).state, 'succeeded');
+  assert.equal(JSON.parse(fs.readFileSync(first.metadataPath)).state, 'failed');
+  const retry = reopened.retry(first.jobId, { requestId: 'retry-interrupted' });
+  await reopened.whenIdle(); assert.equal(reopened.get(retry.jobId).state, 'succeeded');
+  assert.deepEqual(reopened.get(first.jobId), interrupted);
+});
+
+test('running cancellation persists intent, waits for owned cleanup and retains evidence before FIFO release', async t => {
+  const cleanup = deferred(), entered = deferred(); const calls = [];
+  let context;
+  const jobs = service(t, async ctx => {
+    calls.push(ctx.job.requestId);
+    if (ctx.job.requestId !== 'first') return complete();
+    context = ctx; ctx.updateProgress('receiving', 0.3); entered.resolve();
+    await cleanup.promise;
+    fs.writeFileSync(path.join(ctx.partialDir, 'stop.log'), 'cleanup complete');
+    ctx.registerArtifact('partial/stop.log');
+    return complete(); // A late successful worker return must not defeat cancellation.
+  });
+  t.after(() => cleanup.resolve());
+  const first = jobs.submit(request('first')), second = jobs.submit(request('second'));
+  await entered.promise;
+  const cancelling = jobs.cancel(first.jobId);
+  assert.equal(cancelling.state, 'running');
+  assert.ok(cancelling.cancellationRequestedAt);
+  assert.equal(context.signal.aborted, true);
+  assert.throws(() => context.updateProgress('mux', 0.5), /cancel/i);
+  assert.equal(jobs.cancel(first.jobId).cancellationRequestedAt, cancelling.cancellationRequestedAt);
+  assert.equal(JSON.parse(fs.readFileSync(first.metadataPath)).cancellationRequestedAt, cancelling.cancellationRequestedAt);
+  assert.equal(jobs.get(second.jobId).state, 'queued');
+  cleanup.resolve(); await jobs.whenIdle();
+  const done = jobs.get(first.jobId);
+  assert.equal(done.state, 'cancelled'); assert.equal(done.stage, 'receiving');
+  assert.equal(done.error.code, 'CANCELLED'); assert.equal(done.artifacts[0].path, 'partial/stop.log');
+  assert.deepEqual(calls, ['first', 'second']);
+  assert.equal(jobs.cancel(first.jobId).state, 'cancelled');
+  assert.throws(() => jobs.cancel(second.jobId), /queued|running/);
+});
+
+test('explicit retry uses new identity and directories; duplicates and reopen never retry failures', async t => {
+  const outputRoot = root(t); const calls = [];
+  const worker = async ({ job, partialDir, registerArtifact, updateProgress }) => {
+    calls.push(job.requestId); updateProgress('decode', 0.8);
+    fs.writeFileSync(path.join(partialDir, 'decode.log'), 'decode error'); registerArtifact('partial/decode.log');
+    throw new Error('decode failed: inspect decode.log');
+  };
+  const jobs = new JobService({ outputRoot, worker });
+  const original = jobs.submit(request('original')); await jobs.whenIdle();
+  const before = fs.readFileSync(original.metadataPath, 'utf8');
+  const reopened = new JobService({ outputRoot, worker }); await reopened.whenIdle();
+  assert.equal(reopened.submit(request('original')).jobId, original.jobId);
+  assert.deepEqual(calls, ['original']);
+  const retry = reopened.retry(original.jobId, { requestId: 'retry-one' });
+  assert.equal(retry.retryOfJobId, original.jobId); assert.equal(retry.attempt, 2);
+  assert.deepEqual(retry.input, original.input); assert.equal(retry.homeBaseId, original.homeBaseId);
+  assert.notEqual(retry.partialDir, original.partialDir);
+  assert.equal(reopened.retry(original.jobId, { requestId: 'retry-one' }).jobId, retry.jobId);
+  assert.equal(reopened.submit(request('retry-one', 'changed')).jobId, retry.jobId);
+  await reopened.whenIdle(); assert.deepEqual(calls, ['original', 'retry-one']);
+  assert.equal(fs.readFileSync(original.metadataPath, 'utf8'), before);
+  const last = new JobService({ outputRoot, worker }); await last.whenIdle();
+  assert.equal(last.retry(original.jobId, { requestId: 'retry-one' }).jobId, retry.jobId);
+  assert.deepEqual(calls, ['original', 'retry-one']);
+});
+
+test('restart finishes persisted cancellation without replay, and retry rejects unfinished or successful work', async t => {
+  const outputRoot = root(t), jobs = new JobService({ outputRoot, worker: complete });
+  const original = jobs.submit(request('one')); await jobs.whenIdle();
+  assert.throws(() => jobs.retry(original.jobId, { requestId: 'bad' }), /failed|interrupted|cancelled/);
+  fs.writeFileSync(original.metadataPath, JSON.stringify({ ...original, state: 'running', stage: 'mux',
+    cancellationRequestedAt: new Date().toISOString(), error: { code: 'CANCELLED', message: 'Cancelled by operator' } }));
+  const reopened = new JobService({ outputRoot, worker: complete });
+  assert.equal(reopened.get(original.jobId).state, 'cancelled');
+  assert.equal(reopened.get(original.jobId).stage, 'mux');
+  const retry = reopened.retry(original.jobId, { requestId: 'again' });
+  assert.throws(() => reopened.retry(retry.jobId, { requestId: 'bad' }), /failed|interrupted|cancelled/);
+  await reopened.whenIdle(); assert.equal(reopened.get(retry.jobId).state, 'succeeded');
+});
+
+test('explicit retry joins the HomeBase FIFO without cancelling independent work', async t => {
+  const entered = deferred(), release = deferred(), calls = [];
+  const jobs = service(t, async ({ job, signal }) => {
+    calls.push(job.requestId);
+    if (job.requestId === 'failed') throw new Error('capture failed');
+    if (job.requestId === 'active') { entered.resolve(); await release.promise; signal.throwIfAborted(); }
+    return complete();
+  }); t.after(() => release.resolve());
+  const failed = jobs.submit(request('failed')); await jobs.whenIdle();
+  const active = jobs.submit(request('active')); await entered.promise;
+  jobs.submit(request('waiting'));
+  const retry = jobs.retry(failed.jobId, { requestId: 'retry' });
+  const other = jobs.submit(request('other', 'home-b'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(jobs.get(other.jobId).state, 'succeeded');
+  assert.equal(jobs.get(retry.jobId).state, 'queued');
+  jobs.cancel(active.jobId);
+  assert.equal(jobs.get(retry.jobId).state, 'queued');
+  release.resolve(); await jobs.whenIdle();
+  assert.deepEqual(calls, ['failed', 'active', 'other', 'waiting', 'retry']);
+  assert.equal(jobs.get(active.jobId).state, 'cancelled');
+  assert.equal(jobs.get(retry.jobId).state, 'succeeded');
 });
 
 test('a real submitting client exits before the resident process completes and persists the job', { timeout: 15000 }, async t => {

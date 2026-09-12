@@ -15,7 +15,7 @@ const errorCodes = ['UNAUTHENTICATED', 'UNSUPPORTED_DEVICE', 'DEVICE_UNAVAILABLE
   'SERVICE_BUSY', 'SERVICE_STOPPING', 'INVALID_REQUEST', 'INVALID_WINDOW', 'INVALID_TIMEZONE',
   'AMBIGUOUS_OR_NONEXISTENT_TIME', 'JSON_REQUIRED', 'INPUT_TOO_LONG', 'LOCAL_HOST_REQUIRED',
   'LOCAL_ORIGIN_REQUIRED', 'JOB_UNAVAILABLE', 'JOB_NOT_FOUND', 'ARTIFACT_NOT_FOUND', 'NOT_FOUND',
-  'INTERNAL_ERROR', 'PARTIAL_RECORDING', 'EXPORT_FAILED', 'JOB_CANCELLED', 'LOGIN_REQUIRED', 'CAPABILITY_RECORDS_UNAVAILABLE'];
+  'INTERNAL_ERROR', 'PARTIAL_RECORDING', 'EXPORT_FAILED', 'JOB_CANCELLED', 'JOB_INTERRUPTED', 'LOGIN_REQUIRED', 'CAPABILITY_RECORDS_UNAVAILABLE'];
 const error = object({ code: { enum: errorCodes }, message: string });
 const artifact = object({ id: string, name: string, path: string, url: string,
   playable: { type: 'boolean' }, validated: { type: 'boolean' },
@@ -37,6 +37,7 @@ const result = { type: ['object', 'null'], required: ['outcome'], properties: {
 } };
 const job = object({ jobId: string, requestId: string, homeBaseId: string, serial: string, window,
   state: { enum: ['queued', 'running', 'succeeded', 'failed', 'cancelled'] }, stage: string,
+  retryOfJobId: nullableString, attempt: { type: 'integer', minimum: 1 }, cancellationRequestedAt: nullableString,
   progress: { type: 'number', minimum: 0, maximum: 1 }, createdAt: string, updatedAt: string,
   result, artifacts: array(artifact), error: { anyOf: [error, { type: 'null' }] },
 });
@@ -49,6 +50,7 @@ const contract = {
     empty: object({}),
     accepted: object({ ok: { const: true } }),
     identity: { type: 'object', required: ['requestId'], properties: { requestId: nonempty } },
+    retry: object({ requestId: nonempty }),
     window: object(time, ['day', 'start', 'end']),
     export: object({ requestId: nonempty, serial: nonempty, ...time }, ['requestId', 'serial', 'day', 'start', 'end']),
     normalizedWindow: window, device, artifact, job,
@@ -64,7 +66,7 @@ const contract = {
 };
 const ajv = new Ajv({ strict: false });
 ajv.addSchema(contract);
-const validators = Object.fromEntries(['identity', 'window', 'export', 'login', 'verification', 'empty'].map(name =>
+const validators = Object.fromEntries(['identity', 'retry', 'window', 'export', 'login', 'verification', 'empty'].map(name =>
   [name, ajv.getSchema(`${contract.$id}#/definitions/${name}`)]));
 function validateRequest(name, data) {
   const validate = validators[name];

@@ -19,7 +19,7 @@ class JobService {
   #requests = new Map();
   #pending = [];
   #active = new Map();
-  #unfinishedHomes = new Set();
+  #controllers = new Map();
   #fatalError = null;
   #scheduled = false;
 
@@ -35,8 +35,20 @@ class JobService {
       const job = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
       this.#jobs.set(job.jobId, job);
       this.#requests.set(job.requestId, job.jobId);
-      if (!TERMINAL.has(job.state)) this.#unfinishedHomes.add(job.homeBaseId);
     }
+    // Only queued snapshots are safe to execute: running was saved before any
+    // worker side effect, but no durable media checkpoint permits replaying it.
+    for (const job of this.list()) {
+      if (job.state === 'queued') this.#pending.push(job.jobId);
+      else if (job.state === 'running') {
+        const cancelled = Boolean(job.cancellationRequestedAt);
+        const state = cancelled ? 'cancelled' : 'failed';
+        this.#update(job.jobId, { state, result: { ...job.result, outcome: state },
+          error: cancelled ? job.error || { code: 'CANCELLED', message: 'Cancelled by operator before service interruption' }
+            : { code: 'JOB_INTERRUPTED', message: 'The service stopped during execution. Inspect partial evidence and explicitly retry with a new requestId.' } });
+      }
+    }
+    this.#schedule();
   }
 
   get(jobId) {
@@ -52,11 +64,23 @@ class JobService {
     requireString(requestId, 'requestId');
     const existing = this.#requests.get(requestId);
     if (existing) return this.get(existing);
+    return this.#enqueue({ requestId, homeBaseId, input });
+  }
+
+  retry(jobId, { requestId }) {
+    requireString(requestId, 'requestId');
+    const existing = this.#requests.get(requestId);
+    if (existing) return this.get(existing);
+    const previous = this.#requireJob(jobId);
+    if (!['failed', 'cancelled'].includes(previous.state))
+      throw new Error('Only failed or cancelled jobs can be retried');
+    return this.#enqueue({ requestId, homeBaseId: previous.homeBaseId, input: previous.input,
+      retryOfJobId: jobId, attempt: (previous.attempt || 1) + 1 });
+  }
+
+  #enqueue({ requestId, homeBaseId, input, retryOfJobId = null, attempt = 1 }) {
     if (this.#fatalError) throw this.#fatalError;
     requireString(homeBaseId, 'homeBaseId');
-    if (this.#unfinishedHomes.has(homeBaseId)) {
-      throw new Error(`HomeBase ${homeBaseId} has unfinished jobs from a previous service; recovery is not implemented`);
-    }
     const savedInput = copy(input);
     const jobId = randomUUID();
     const directory = path.join(this.outputRoot, jobId);
@@ -68,6 +92,7 @@ class JobService {
     const now = new Date().toISOString();
     const job = {
       jobId, requestId, homeBaseId, input: savedInput,
+      retryOfJobId, attempt, cancellationRequestedAt: null,
       sequence: Math.max(0, ...[...this.#jobs.values()].map(item => item.sequence)) + 1,
       state: 'queued', stage: 'queued', progress: 0,
       createdAt: now, updatedAt: now,
@@ -84,15 +109,29 @@ class JobService {
   cancelQueued(jobId, error = { code: 'CANCELLED', message: 'Cancelled before execution' }) {
     const job = this.#requireJob(jobId);
     if (job.state === 'cancelled') return this.get(jobId);
-    if (job.state !== 'queued') throw new Error('Only queued jobs can be cancelled by Phase A controls');
+    if (job.state !== 'queued') throw new Error('Only queued jobs can be cancelled by cancelQueued');
     this.#transition(jobId, 'cancelled', {
+      cancellationRequestedAt: new Date().toISOString(),
       result: { outcome: 'cancelled' },
       error,
     });
     return this.get(jobId);
   }
 
-  // Waits for this instance's accepted work, not unfinished jobs loaded from disk.
+  cancel(jobId) {
+    const job = this.#requireJob(jobId);
+    if (job.state === 'queued') return this.cancelQueued(jobId);
+    if (job.state === 'cancelled') return this.get(jobId);
+    if (job.state !== 'running') throw new Error('Only queued or running jobs can be cancelled');
+    if (!job.cancellationRequestedAt) {
+      const error = { code: 'CANCELLED', message: 'Cancelled by operator' };
+      this.#update(jobId, { cancellationRequestedAt: new Date().toISOString(), error });
+      this.#controllers.get(jobId).abort(Object.assign(new Error(error.message), { code: error.code }));
+    }
+    return this.get(jobId);
+  }
+
+  // Includes safely recovered queued work and waits for cancellation cleanup.
   async whenIdle() {
     do {
       await Promise.resolve();
@@ -139,12 +178,15 @@ class JobService {
 
   #context(jobId) {
     const job = this.get(jobId);
+    const signal = this.#controllers.get(jobId).signal;
     return {
       job,
+      signal,
       artifactsDir: job.artifactsDir,
       partialDir: job.partialDir,
       updateProgress: (stage, progress) => {
         this.#requireRunning(jobId);
+        signal.throwIfAborted();
         requireString(stage, 'stage');
         if (!Number.isFinite(progress) || progress < 0 || progress > 1) {
           throw new TypeError('progress must be a number between 0 and 1');
@@ -197,19 +239,22 @@ class JobService {
 
   async #execute(jobId) {
     this.#transition(jobId, 'running', { stage: 'starting' });
+    const controller = new AbortController();
+    this.#controllers.set(jobId, controller);
     let result;
     try {
       result = await this.worker(this.#context(jobId));
       result = result === undefined ? {} : copy(result);
       if (!result || typeof result !== 'object' || Array.isArray(result)) result = {};
     } catch (error) {
-      this.#transition(jobId, 'failed', {
-        result: { outcome: 'failed' },
-        error: { code: 'WORKER_FAILED', message: error?.message || String(error) },
-      });
-      return;
+      result = { outcome: 'failed', error: { code: 'WORKER_FAILED', message: error?.message || String(error) } };
+    } finally {
+      this.#controllers.delete(jobId);
     }
-    if (result.outcome === 'complete' && result.coverageVerified === true && result.validation?.passed === true) {
+    if (controller.signal.aborted) {
+      this.#transition(jobId, 'cancelled', { result: { ...result, outcome: 'cancelled', coverageVerified: false },
+        error: this.#requireJob(jobId).error });
+    } else if (result.outcome === 'complete' && result.coverageVerified === true && result.validation?.passed === true) {
       this.#transition(jobId, 'succeeded', { stage: 'completed', progress: 1, result });
     } else if (result.outcome === 'cancelled') {
       this.#transition(jobId, 'cancelled', { result, error: result.error || { code: 'CANCELLED', message: 'Worker stopped' } });

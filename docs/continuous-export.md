@@ -53,9 +53,11 @@ A successful process exit, received end boundary, MP4 existence, or short playab
 
 ## Shutdown and restart
 
-`await exporter.shutdown()` is service shutdown, not a Phase B running-job operator API. It rejects new work, cancels queued jobs, aborts this service's active capture or child process, and waits until workers settle. A submitted client's disconnection does not call shutdown. Acquisition stop waits for in-progress readiness to settle and closes any resulting connection before the job slot is released. A child process is awaited through `close` after termination.
+`await exporter.shutdown()` rejects new work, cancels queued jobs, aborts this service's active capture or child process, and waits until workers settle. A submitted client's disconnection does not call shutdown. Acquisition stop waits for in-progress readiness to settle and closes any resulting connection before the job slot is released. A child process is awaited through `close` after termination.
 
-After a crash, instantiate once against the same store after the old owner has stopped. Historical running/queued jobs and partial files remain unfinished; they are not retried, resumed or made successful. Their HomeBase blocks new work under the Phase A contract. Duplicate identity returns the original snapshot. Phase B recovery and explicit retry controls remain in Issue #1.
+`exporter.cancel(jobId)` provides per-job operator cancellation. Running work keeps its HomeBase slot until cleanup settles and then persists `cancelled`; the last stage and partial evidence remain available. Each runtime check, capture and media stage receives a combined job/service abort signal, checked before and after processing so cancellation cannot start a later mux, conversion or decode stage. The [v1 API](../api/v1.md) exposes this as `POST /api/v1/jobs/:jobId/cancel`.
+
+After a crash, instantiate once against the same store only after the old owner and its media processes have stopped. Queued jobs resume in their original FIFO order because execution never began. Previously running jobs become `failed` with `JOB_INTERRUPTED`, preserving the last stage, progress, registered artifacts and saved diagnostics. Persisted cancellation requests become `cancelled`. No running or failed export is replayed implicitly; duplicate request identity still returns the original job. `exporter.retry(jobId, { requestId: 'new-id' })` or the [v1 retry endpoint](../api/v1.md) creates a fresh linked attempt and fresh output directory while retaining the original evidence. The service keeps existing public terminal states, and queued recovery without a valid session fails with `LOGIN_REQUIRED` before capture.
 
 ## Tests and real-device acceptance
 
