@@ -1,4 +1,6 @@
 import { createI18n } from '/assets/i18n.mjs';
+import { createResults } from '/assets/results.mjs';
+import { mountSidebar } from '/assets/sidebar.mjs';
 
 const catalogs = Object.fromEntries(await Promise.all(['en', 'zh-CN'].map(async locale => {
   const response = await fetch(`/locales/${locale}.json`);
@@ -10,6 +12,8 @@ try { storage = window.localStorage; } catch { /* Storage is optional. */ }
 const i18n = createI18n({ catalogs, storage, languages: () => navigator.languages || [navigator.language] });
 const el = id => document.getElementById(id);
 const t = (key, params) => i18n.t(key, params);
+const components = createResults({ document, i18n });
+let sidebar;
 let authState, recordingState, authError, recordingError;
 let deviceKey = '', resultKey = '', savedKey = '';
 
@@ -18,6 +22,7 @@ el('recording-day').value = new Intl.DateTimeFormat('sv-SE', {
 }).format(new Date());
 
 function errorText(error) {
+  if (error.error && typeof error.error === 'object') return components.error(error.error);
   return error.errorI18n ? i18n.message(error.error, error.errorI18n) : t('ui.externalError', { detail: error.error });
 }
 function localError(key) { return { errorI18n: { key } }; }
@@ -71,24 +76,15 @@ function renderRecordings() {
   const nextResultKey = JSON.stringify([state.records, state.busy, i18n.locale]);
   if (nextResultKey !== resultKey) {
     resultKey = nextResultKey;
-    el('recording-results').replaceChildren(...state.records.map(record => {
-      const div = document.createElement('div'); div.className = 'clip';
-      const label = document.createElement('span'); label.textContent = i18n.date(record.start) + ' — ' + i18n.date(record.end);
-      const button = document.createElement('button'); button.textContent = t('ui.extract'); button.disabled = state.busy;
-      button.onclick = () => recordingAction('/recordings/download', { recordId: record.id });
-      div.append(label, button); return div;
-    }));
+    el('recording-results').replaceChildren(...(state.records.length ? [components.timeline({
+      ranges: state.records.map(record => ({ ...record, start: i18n.date(record.start), end: i18n.date(record.end) })),
+      busy: state.busy, action: record => recordingAction('/recordings/download', { recordId: record.id }),
+    })] : []));
   }
   const nextSavedKey = JSON.stringify(state.saved);
   if (savedKey !== nextSavedKey) {
     savedKey = nextSavedKey;
-    el('saved-recordings').replaceChildren(...state.saved.map(clip => {
-      const div = document.createElement('div'); div.className = 'clip';
-      const label = document.createElement('strong');
-      const video = document.createElement('video'); video.controls = true; video.preload = 'metadata'; video.src = clip.url;
-      const link = document.createElement('a'); link.href = clip.url + '?download';
-      div.append(label, video, link); return div;
-    }));
+    el('saved-recordings').replaceChildren(...state.saved.map(clip => components.player(clip, clip.device)));
   }
   // Updating translated labels in place preserves video playback and currentTime.
   [...el('saved-recordings').children].forEach((div, index) => {
@@ -104,7 +100,7 @@ function applyLanguage() {
   document.querySelectorAll('[data-i18n]').forEach(node => { node.textContent = t(node.dataset.i18n); });
   document.querySelectorAll('[data-i18n-alt]').forEach(node => { node.alt = t(node.dataset.i18nAlt); });
   el('language').value = i18n.preference;
-  renderAuth(); renderRecordings();
+  renderAuth(); renderRecordings(); sidebar?.render();
 }
 el('language').addEventListener('change', () => { i18n.setPreference(el('language').value); applyLanguage(); });
 window.addEventListener('languagechange', () => { if (i18n.preference === 'auto') applyLanguage(); });
@@ -162,5 +158,6 @@ el('query-recordings').addEventListener('submit', event => {
   });
 });
 applyLanguage();
+sidebar = mountSidebar({ document, window, i18n, fetch, storage });
 refresh(); setInterval(refresh, 1500);
 refreshRecordings(); setInterval(refreshRecordings, 1500);

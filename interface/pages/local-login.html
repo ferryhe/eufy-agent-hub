@@ -11,6 +11,7 @@
 .language-control{display:flex;justify-content:flex-end;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px}.language-control label{margin:0}.language-control select{width:auto;max-width:100%}@media(max-width:560px){.times{flex-direction:column;gap:0}#devices{columns:1}}
 </style>
 <main>
+  <nav class="mode-control" aria-label="View"><button id="mode-fixed" type="button" data-i18n="ui.modeFixed">Browse recordings</button><button id="mode-agent" type="button" data-i18n="ui.modeAgent">Ask assistant</button></nav>
   <div class="language-control"><label for="language" data-i18n="ui.language">Language</label><select id="language"><option value="auto" data-i18n="ui.language.auto">Follow browser</option><option value="en" lang="en">English</option><option value="zh-CN" lang="zh-CN">简体中文</option></select></div>
   <h1 data-i18n="ui.title">eufy recording export</h1>
   <p data-i18n="ui.intro">Connect your account to read historical event recordings from your HomeBase 3.</p>
@@ -26,7 +27,7 @@
     <label for="code" data-i18n="ui.code">Verification code</label><input id="code" autocomplete="one-time-code" required>
     <button id="verify-submit" data-i18n="ui.verify">Submit code</button>
   </form>
-  <div id="status" role="status" aria-live="polite" data-i18n="ui.connecting">Connecting to the local service…</div>
+  <div id="status" role="status" tabindex="-1" aria-live="polite" data-i18n="ui.connecting">Connecting to the local service…</div>
   <ul id="diagnostics"></ul>
   <details><summary data-i18n="ui.devices">Linked devices</summary><ul id="devices"></ul></details>
   <button id="reload-devices" type="button" hidden data-i18n="ui.refresh">Refresh devices</button>
@@ -43,8 +44,29 @@
     <p id="recording-message" role="status"></p>
     <div id="recording-results"></div>
   </section>
-  <section><h2 data-i18n="ui.saved">Exported recordings</h2><p data-i18n="ui.saved.hint">These files are saved on this computer. Times come from the event index; clips may include pre-recorded footage. Event clips do not guarantee coverage of the entire requested interval.</p><div id="saved-recordings"></div></section>
+  <section id="saved-section"><h2 data-i18n="ui.saved">Exported recordings</h2><p data-i18n="ui.saved.hint">These files are saved on this computer. Times come from the event index; clips may include pre-recorded footage. Event clips do not guarantee coverage of the entire requested interval.</p><div id="saved-recordings"></div></section>
+  <section id="shared-results" aria-label="Recording results">
+    <h2 data-i18n="ui.sharedResults">Recording results</h2>
+    <p data-i18n="ui.sharedHint">These results stay available in both views. Refreshing observes resident work without another model call.</p>
+    <p id="device-status" role="status"></p><div id="shared-devices" class="device-grid"></div>
+    <div id="shared-timelines"></div><p id="job-status" role="status"></p><div id="shared-jobs"></div>
+  </section>
   <small data-i18n="ui.privacy">This page is provided by your local project, not eufy. Passwords and login sessions are held in service memory and cleared when it stops.</small>
 </main>
+<aside id="agent-sidebar" hidden>
+  <h2 data-i18n="ui.modeAgent">Ask assistant</h2>
+  <p data-i18n="ui.agentHint">Ask for a camera, calendar date and time range. Missing details will be clarified here.</p>
+  <p data-i18n="ui.agentPrivacy">Use the normal sign-in form for passwords and verification codes. Never put them in chat.</p>
+  <button id="agent-login" type="button" data-i18n="ui.normalLogin">Go to sign-in form</button>
+  <label for="response-language" data-i18n="ui.responseLanguage">Response language</label>
+  <select id="response-language"><option value="auto" data-i18n="ui.responseAuto">Follow interface</option><option value="en">English</option><option value="zh-CN">简体中文</option></select>
+  <div id="agent-history" aria-live="polite" aria-relevant="additions text"></div>
+  <div id="agent-notices" role="status"></div>
+  <form id="agent-form"><label for="agent-message" data-i18n="ui.message">Recording request</label><textarea id="agent-message" rows="4" maxlength="16000" required></textarea><button id="agent-send" data-i18n="ui.send">Send</button></form>
+  <p id="agent-status" role="status"></p>
+</aside>
+<style>
+  body{padding:24px}main{margin:0 auto}body:has(#agent-sidebar:not([hidden])){display:grid;grid-template-columns:minmax(0,900px) minmax(300px,380px);gap:24px;justify-content:center;align-items:start}#agent-sidebar{padding:24px;background:white;border-radius:20px;position:sticky;top:24px;max-height:calc(100vh - 48px);overflow:auto}textarea{width:100%;padding:12px;font:inherit;border:1px solid #b8c5d1;border-radius:9px}.mode-control{display:flex;gap:12px;margin-bottom:24px}.mode-control button{margin:0}.mode-control button[aria-pressed=true]{outline:3px solid #7ccae7;outline-offset:2px}.device-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}.device-card,.timeline-card,.job-card,.conversation-turn{background:#f3f6fa;padding:16px;border-radius:12px;margin:16px 0;overflow-wrap:anywhere}.device-card p{margin:4px 0}h3{margin:0;font-size:18px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}progress{width:100%}.conversation-turn p{white-space:pre-wrap}.job-card [data-status]{font-weight:700}.timeline-card li{border-left:3px solid #007dbb;padding-left:12px}button:focus-visible,a:focus-visible,textarea:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid #e89d18;outline-offset:3px}@media(max-width:900px){body:has(#agent-sidebar:not([hidden])){display:flex;flex-direction:column}main{width:100%}#agent-sidebar{position:static;max-height:none;width:100%;order:-1}}@media(max-width:560px){body{padding:12px}main{margin:0;padding:20px}.mode-control{flex-wrap:wrap}#agent-sidebar{padding:20px}}
+</style>
 <script type="module" src="/assets/local-login.mjs"></script>
 </html>

@@ -46,11 +46,13 @@ function createRecordingAgent(options = {}) {
     }) } : {}),
   });
   let running = false;
-  return { agent, client, async turn(text, { signal } = {}) {
+  return { agent, client, async turn(text, { signal, preferredLocale } = {}) {
     if (running) throw new Error('This caller-owned session already has an active turn.');
     if (typeof text !== 'string' || !text.trim() || text.length > 16000) throw new Error('Provide 1–16000 characters.');
     running = true;
     try {
+      agent.instructions = instructions + (['en', 'zh-CN'].includes(preferredLocale)
+        ? `\nThe caller's preferred response language is ${preferredLocale}. Use it for explanations. Preserve user text, device names and all tool arguments unchanged.` : '');
       (client.state.userInputs ??= []).push(text);
       client.save();
       const result = await runner.run(agent, [...client.state.history, user(text)], {
