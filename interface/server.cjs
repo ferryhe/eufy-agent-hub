@@ -101,6 +101,8 @@ function createServer(options = {}) {
   const v1 = installV1Routes(server, session, {
     getOrigin, isBusy: () => busy || recordingRoutes.state.busy || session.state.phase === 'busy',
     exports: options.exports, createRanges: options.createRanges,
+    capabilityRecordsPath: options.capabilityRecordsPath ?? process.env.EUFY_CAPABILITY_RECORDS_PATH,
+    deviceRepository: options.deviceRepository,
   });
   const isBusy = () => busy || recordingRoutes.state.busy || v1.isBusy();
   let shutdown;

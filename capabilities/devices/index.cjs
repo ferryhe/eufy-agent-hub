@@ -13,4 +13,4 @@ async function refreshDevices(session) {
   return getDevices(session);
 }
 
-module.exports = { getDevices, refreshDevices };
+module.exports = { getDevices, refreshDevices, ...require('./capabilities.cjs'), ...require('./verification-store.cjs') };

@@ -4,7 +4,8 @@ const { ContinuousExportService } = require('../capabilities/recordings/continuo
 const { LocalContinuousRecordings } = require('../capabilities/recordings/continuous.cjs');
 const { normalizeWindow } = require('../capabilities/recordings/time-window.cjs');
 const { recordingSegments } = require('../capabilities/recordings/continuous-completeness.cjs');
-const { continuousDevices } = require('../capabilities/devices/continuous-mapping.cjs');
+const { describeDevices, queryCapability } = require('../capabilities/devices/capabilities.cjs');
+const { DeviceVerificationRepository } = require('../capabilities/devices/verification-store.cjs');
 const { serveMedia } = require('./legacy-recording-routes.cjs');
 const { contract, validateRequest } = require('./v1-contract.cjs');
 const { isAuthenticated } = require('../capabilities/auth/session.cjs');
@@ -41,6 +42,7 @@ function jobView(job, loginRequired = false) {
 }
 
 function installV1Routes(server, session, options) {
+  const deviceRepository = options.deviceRepository || new DeviceVerificationRepository(options.capabilityRecordsPath);
   let exporter, pending = 0, rangeBusy = false, stopping = false;
   // Report known cloud expiry without logging out or disturbing accepted local work.
   const cloudAuthenticated = () => isAuthenticated(session);
@@ -80,7 +82,7 @@ function installV1Routes(server, session, options) {
         busy: Boolean(options.isBusy() || active()), loginUrl: '/api/v1/session/login', verificationUrl: '/api/v1/session/verify', logoutUrl: '/api/v1/session/logout',
       });
       if (stopping) throw fault(503, 'SERVICE_STOPPING', 'The resident service is shutting down.');
-      const match = /^\/api\/v1\/devices(?:\/([^/]+)(?:\/(recording-ranges))?)?$/.exec(route);
+      const match = /^\/api\/v1\/devices(?:\/([^/]+)(?:\/(recording-ranges)|\/capabilities\/([^/]+))?)?$/.exec(route);
       if (match && ((req.method === 'GET' && !match[2]) || (req.method === 'POST' && match[2]))) {
         requireCloudSession();
         if (options.isBusy() || (match[2] && (active() || rangeBusy))) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
@@ -95,6 +97,10 @@ function installV1Routes(server, session, options) {
           const devices = await inventory();
           if (!match[1]) return send(200, { devices });
           const device = findDevice(devices, decodeURIComponent(match[1]));
+          if (match[3]) {
+            const capability = decodeURIComponent(match[3]);
+            return send(200, { serial: device.serial, capability, ...queryCapability(device, capability) });
+          }
           if (!match[2]) return send(200, { device });
           requireSupported(device);
           const window = windowOf(data);
@@ -165,9 +171,13 @@ function installV1Routes(server, session, options) {
       const data = await session.api.getDevsListDecrypted();
       requireCloudSession();
       if (!Array.isArray(data?.devices)) throw new Error('Device inventory is unavailable.');
-      return continuousDevices(data.devices);
+      let observations;
+      try { observations = deviceRepository.read(); }
+      catch (error) { throw fault(503, 'CAPABILITY_RECORDS_UNAVAILABLE', `Device verification records are unavailable: ${error.message}`); }
+      return describeDevices(data.devices, observations);
     } catch (error) {
       requireCloudSession();
+      if (error.code === 'CAPABILITY_RECORDS_UNAVAILABLE') throw error;
       throw fault(503, 'DEVICE_UNAVAILABLE', error.message);
     }
   }

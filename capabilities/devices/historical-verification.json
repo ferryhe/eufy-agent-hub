@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "identity": "Sanitized aliases for one historical camera/HomeBase pair; not runtime serials or model-wide defaults",
+  "firmwareStatus": "Not recorded in the available hardware evidence",
+  "records": [
+    {
+      "scope": {
+        "serial": "historical-camera", "model": "T8600", "firmware": { "main": null, "secondary": null },
+        "homeBase": { "serial": "historical-homebase", "model": "T8030", "firmware": { "main": null, "secondary": null } },
+        "channel": 1
+      },
+      "capability": "continuousRecordingQuery", "status": "verified",
+      "reason": "Historical command 6000 returned the retained 20-minute interval; firmware unknown",
+      "evidence": [{
+        "source": "capabilities/recordings/CONTINUOUS_PLAYBACK.md#real-retained-window-evidence-2026-09-11",
+        "observedAt": "2026-09-11", "outcome": "requested_range_returned"
+      }]
+    },
+    {
+      "scope": {
+        "serial": "historical-camera", "model": "T8600", "firmware": { "main": null, "secondary": null },
+        "homeBase": { "serial": "historical-homebase", "model": "T8030", "firmware": { "main": null, "secondary": null } },
+        "channel": 1
+      },
+      "capability": "continuousRecordingExport", "status": "verified",
+      "reason": "Historical direct capture and retained-input service processing decoded successfully with partial media; firmware unknown",
+      "evidence": [{
+        "source": "capabilities/devices/VERIFICATION.md#evidence-lineage",
+        "observedAt": "2026-09-11", "outcome": "partial"
+      }]
+    },
+    {
+      "scope": {
+        "serial": "historical-homebase", "model": "T8030", "firmware": { "main": null, "secondary": null },
+        "homeBase": null, "channel": null
+      },
+      "capability": "continuousRecordingQuery", "status": "verified",
+      "reason": "Historical HomeBase transport served command 6000 for its paired camera on channel 1; firmware unknown",
+      "evidence": [{
+        "source": "capabilities/recordings/CONTINUOUS_PLAYBACK.md#real-retained-window-evidence-2026-09-11",
+        "observedAt": "2026-09-11", "outcome": "requested_range_returned"
+      }]
+    },
+    {
+      "scope": {
+        "serial": "historical-homebase", "model": "T8030", "firmware": { "main": null, "secondary": null },
+        "homeBase": null, "channel": null
+      },
+      "capability": "continuousRecordingExport", "status": "verified",
+      "reason": "Historical HomeBase transport returned partial camera media on channel 1; composite offline conversion evidence; firmware unknown",
+      "evidence": [{
+        "source": "capabilities/devices/VERIFICATION.md#evidence-lineage",
+        "observedAt": "2026-09-11", "outcome": "partial"
+      }]
+    }
+  ]
+}
