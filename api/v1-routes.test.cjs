@@ -65,6 +65,7 @@ async function fixture(t, options = {}) {
     capabilityRecordsPath: options.capabilityRecordsPath || path.join(directory, 'devices', 'verification.json'),
     deviceRepository: options.deviceRepository,
     playback: options.playback,
+    live: options.live,
     exports: { outputRoot: path.join(directory, 'jobs'), execute: options.execute || media(), createCapture: () => ({
       close() { calls.captureClosed = true; },
       async captureRange(serial, start, stop, destination, control) {
@@ -119,6 +120,100 @@ function capabilityObservation(scope, capability, status = 'verified') {
   return { scope, capability, status, reason: 'offline_fixture_observation',
     evidence: [{ source: 'offline-api-fixture', observedAt: '2026-09-11', outcome: 'partial' }] };
 }
+
+function liveFixture() {
+  const { PassThrough } = require('node:stream'), { CommandName } = require('../adapters/eufy');
+  const station = new EventEmitter(), calls = []; let connected = false;
+  Object.assign(station, { p2pSession: { isConnected: () => connected, isCurrentlyStreaming: () => false },
+    getSerial: () => 'base', getModel: () => 'T8030', isLiveStreaming: () => connected,
+    startLivestream() {
+      calls.push('start'); queueMicrotask(() => {
+        station.emit('command result', station, { channel: 0, customData: { command: { name: CommandName.DeviceStartLivestream } }, return_code: 0 });
+        station.emit('livestream start', station, 0, { videoCodec: 0 }, new PassThrough(), new PassThrough());
+      });
+    },
+    stopLivestream() { calls.push('stop'); queueMicrotask(() => station.emit('command result', station,
+      { channel: 0, customData: { command: { name: CommandName.DeviceStopLivestream } }, return_code: 0 })); },
+  });
+  return { calls, createConnection: () => ({ station,
+    camera: { getSerial: () => 'camera', getStationSerial: () => 'base', getModel: () => 'T8600', getChannel: () => 0 },
+    connect: async () => { calls.push('connect'); connected = true; }, close: async () => { calls.push('close'); connected = false; } }),
+  createDecoder: ({ onFrame }) => { queueMicrotask(() => onFrame(Buffer.from([255,216,0,255,217]))); return { close: async () => calls.push('decoder-close') }; } };
+}
+
+test('live v1 preserves DEVICE_NOT_FOUND through the rejecting inventory resolver', async t => {
+  const live = liveFixture(), f = await fixture(t, { live }); await f.login();
+  const result = await f.json('/api/v1/live-sessions', { requestId: 'absent-live-device', serial: 'absent' });
+  assert.equal(result.status, 404);
+  assert.equal(result.value.error.code, 'DEVICE_NOT_FOUND');
+  assert.deepEqual(live.calls, [], 'An absent device must not construct a media connection');
+});
+
+test('live v1 identity, schema, media and duplicate-client conflicts use one stable resident owner', async t => {
+  const live = liveFixture(), f = await fixture(t, { live }); await f.login();
+  const input = { requestId: 'live-one', serial: 'camera' };
+  const opened = await f.json('/api/v1/live-sessions', input, 'liveResponse');
+  assert.equal(opened.status, 201); assert.equal(opened.value.live.capability.status, 'protocol_hint');
+  const id = opened.value.live.sessionId;
+  const reused = await f.json('/api/v1/live-sessions', input, 'liveResponse');
+  assert.equal(reused.status, 200); assert.equal(reused.value.reused, true); assert.equal(reused.value.live.sessionId, id);
+  assert.equal((await f.json('/api/v1/live-sessions', { ...input, serial: 'other' })).value.error.code, 'LIVE_REQUEST_CONFLICT');
+  assert.equal((await f.json('/api/v1/live-sessions', { ...input, requestId: 'new' })).value.error.code, 'SERVICE_BUSY');
+  const response = await fetch(f.origin + opened.value.live.media.url), reader = response.body.getReader();
+  assert.equal(response.headers.get('content-type'), opened.value.live.media.contentType);
+  assert.ok((await reader.read()).value.includes(255));
+  assert.equal((await f.json(opened.value.live.media.url)).value.error.code, 'LIVE_CLIENT_CONFLICT');
+  await reader.cancel();
+  const stopped = await f.json(`/api/v1/live-sessions/${id}/stop`, {}, 'liveResponse');
+  assert.equal(stopped.value.live.cleanupComplete, true); assert.equal(stopped.value.live.stopConfirmed, true);
+  assert.equal((await f.json(`/api/v1/live-sessions/${id}`, undefined, 'liveResponse')).value.live.state, 'stopped');
+  assert.equal((await f.json(`/api/v1/live-sessions/${id}/stop`, {}, 'liveResponse')).value.live.state, 'stopped');
+  assert.deepEqual(live.calls, ['connect','start','stop','decoder-close','close']);
+});
+
+test('live admission uses existing export, playback, range and auth guards, including split bodies', async t => {
+  const live = liveFixture(), f = await fixture(t, { live }); await f.login();
+  const delayed = await splitBody(f, '/api/v1/exports', request);
+  const opened = await f.json('/api/v1/live-sessions', { requestId: 'live', serial: 'camera' }, 'liveResponse');
+  for (const [route, data] of [['/api/v1/exports', request], ['/api/v1/playback-sessions', { serial: request.serial, day: request.day, start: request.start, end: request.end }],
+    ['/api/v1/devices/camera/recording-ranges', { day: request.day, start: request.start, end: request.end }],
+    ['/api/v1/session/refresh', {}], ['/recordings/query', { serial: 'camera', day: request.day }]]) {
+    const result = await f.json(route, data);
+    assert.equal(result.status, 409, route);
+  }
+  assert.equal((await delayed.finish()).status, 409);
+  const logout = await f.json('/api/v1/session/logout', {});
+  assert.equal(logout.status, 202);
+  assert.equal((await f.json(`/api/v1/live-sessions/${opened.value.live.sessionId}`, undefined, 'liveResponse')).value.live.cleanupComplete, true);
+  assert.equal(f.calls.capture, 0); assert.equal(f.calls.range, 0);
+});
+
+test('accepted export excludes a late live body; service shutdown ends an attached live response', async t => {
+  let release; const gate = new Promise(resolve => { release = resolve; }); t.after(release);
+  const live = liveFixture(), f = await fixture(t, { live, gate }); await f.login();
+  const delayed = await splitBody(f, '/api/v1/live-sessions', { requestId: 'live', serial: 'camera' });
+  const job = await f.json('/api/v1/exports', request, 'submission');
+  assert.equal((await delayed.finish()).status, 409); assert.deepEqual(live.calls, []);
+  release(); await f.terminal(job.value.job.jobId);
+  const opened = await f.json('/api/v1/live-sessions', { requestId: 'after-export', serial: 'camera' }, 'liveResponse');
+  const response = await fetch(f.origin + opened.value.live.media.url), reader = response.body.getReader();
+  await reader.read(); await f.server.shutdown();
+  assert.equal((await reader.read()).done, true); assert.ok(live.calls.includes('close'));
+  assert.equal(f.calls.sessionClosed, true);
+});
+
+test('disconnected live start cancels delayed inventory and never connects after it arrives', async t => {
+  const live = liveFixture(), f = await fixture(t, { live }); await f.login();
+  let entered, release;
+  const ready = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; }); t.after(release);
+  f.api.getDevsListDecrypted = async () => { entered(); await gate; return { devices: f.raw }; };
+  const request = http.request(f.origin + '/api/v1/live-sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+  request.on('error', () => {}); request.end(JSON.stringify({ requestId: 'disconnected', serial: 'camera' }));
+  await ready; request.destroy(); await new Promise(resolve => setTimeout(resolve, 20));
+  release(); await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(live.calls, []);
+  assert.equal((await f.json('/api/v1/session', undefined, 'session')).value.busy, false);
+});
 
 function playbackFixture() {
   const p = new EventEmitter(), commands = [];

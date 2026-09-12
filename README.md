@@ -16,7 +16,7 @@ An eufy capability platform for agents: account access, device discovery, record
 | [capabilities/devices](capabilities/devices) | Device snapshots and refresh using the shared session | Thin wrapper migrated; capability matrix pending |
 | [capabilities/recordings](capabilities/recordings) | Event queries, downloads, MP4 conversion, and decode validation | Validated migration; requires FFmpeg |
 | Same directory: `continuous.cjs` / `mux.py` | Continuous ranges, playback by time, timestamped raw-frame capture | Experimental; short clip tested, long-clip completeness pending |
-| [capabilities/live](capabilities/live) | Ownership of live-video capabilities | Wrapping and hardware validation pending |
+| [capabilities/live](capabilities/live) | Live video and connection lifecycle | v1 sessions; hardware validation completed for one exact device/firmware scope |
 | [api](api) | Resident v1 recording jobs and the original page protocol | Device/range/job/artifact contract; legacy page preserved |
 | [interface](interface) | Fixed login, device, event-recording, and player page | Runnable fixed browsing, Agent sidebar and persistent dynamic workspace |
 | [jobs](jobs) | Durable job identity, state, per-HomeBase queue, and output ownership | Phase A module with offline tests; service/recording integration and Phase B recovery pending |
@@ -162,7 +162,7 @@ This project uses the [MIT License](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD
 | [capabilities/devices](capabilities/devices) | 设备列表快照与刷新，复用登录会话 | 已迁入薄封装；能力矩阵待补 |
 | [capabilities/recordings](capabilities/recordings) | 事件查询、下载、MP4 转换及解码验证 | 已验证迁入；依赖 FFmpeg |
 | 同上 `continuous.cjs` / `mux.py` | 连续时段查询、按时间回放、带时间戳的原始帧捕获 | 实验性；短片实测，长片完整性待验收 |
-| [capabilities/live](capabilities/live) | 实时视频能力归属 | 待封装、待实测 |
+| [capabilities/live](capabilities/live) | 实时视频与连接生命周期 | v1 会话已交付；已完成一个精确设备及固件范围的硬件验证 |
 | [api](api) | 常驻 v1 录像任务与原页面协议 | 设备/范围/任务/产物契约；保留旧页面 |
 | [interface](interface) | 固定登录、设备、事件录像和播放器页面 | 固定浏览、Agent 侧栏和可恢复动态工作区可运行 |
 | [jobs](jobs) | 持久化任务标识、状态、HomeBase 排队与独立产物目录 | Phase A 模块已通过离线测试；服务和录像接入、Phase B 恢复能力待完成 |

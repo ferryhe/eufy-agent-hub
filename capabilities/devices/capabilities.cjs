@@ -67,6 +67,7 @@ function entry(status, reason, evidence = []) {
 }
 
 function defaultCapability(capability, raw, base, eligible) {
+  if (capability === 'talkback' || capability === 'rtsp') return entry('unknown', 'requires_independent_hardware_verification');
   if (capability === 'continuousPlaybackControls') {
     return eligible
       ? entry('protocol_hint', 'android_6001_controls_require_device_firmware_verification')

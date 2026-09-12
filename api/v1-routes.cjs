@@ -3,6 +3,7 @@ const path = require('node:path');
 const { ContinuousExportService } = require('../capabilities/recordings/continuous-export.cjs');
 const { LocalContinuousRecordings } = require('../capabilities/recordings/continuous.cjs');
 const { PlaybackSessions } = require('../capabilities/recordings/playback-session.cjs');
+const { LiveSessions } = require('../capabilities/live/session.cjs');
 const { normalizeWindow } = require('../capabilities/recordings/time-window.cjs');
 const { recordingSegments } = require('../capabilities/recordings/continuous-completeness.cjs');
 const { describeDevices, queryCapability } = require('../capabilities/devices/capabilities.cjs');
@@ -59,8 +60,10 @@ function installV1Routes(server, session, options) {
   const ranges = new Set();
   const playback = new PlaybackSessions({ session, createConnection: options.playback?.createConnection,
     resolveDevice: async serial => { const { devices, discovery } = await inventory(); return findDevice(devices, serial, discovery); } });
+  const live = new LiveSessions({ ...options.live, session,
+    resolveDevice: async serial => { const { devices, discovery } = await inventory(); return findDevice(devices, serial, discovery); } });
   const getExporter = () => exporter ||= new ContinuousExportService({ session, ...options.exports });
-  const active = () => pending > 0 || playback.isBusy() || Boolean(exporter?.jobs.list().some(job => ['queued', 'running'].includes(job.state)));
+  const active = () => pending > 0 || playback.isBusy() || live.isBusy() || Boolean(exporter?.jobs.list().some(job => ['queued', 'running'].includes(job.state)));
   // Listening follows session restoration. Recover durable work without a new
   // caller request, and include that work in the existing session/media guards.
   server.once('listening', getExporter);
@@ -90,6 +93,33 @@ function installV1Routes(server, session, options) {
         busy: Boolean(options.isBusy() || active()), loginUrl: '/api/v1/session/login', verificationUrl: '/api/v1/session/verify', logoutUrl: '/api/v1/session/logout',
       });
       if (stopping) throw fault(503, 'SERVICE_STOPPING', 'The resident service is shutting down.');
+      if (route === '/api/v1/live-sessions' && req.method === 'POST') {
+        const data = await body(req, origin, 'liveStart');
+        requireCloudSession();
+        if (stopping) throw fault(503, 'SERVICE_STOPPING', 'The resident service is shutting down.');
+        const reused = live.hasRequest(data.requestId);
+        if (!reused && (options.isBusy() || active() || rangeBusy)) throw fault(409, 'SERVICE_BUSY', 'A media or login operation is active.');
+        pending++;
+        let completed = false;
+        const disconnected = () => { if (!completed && !reused) live.closeRequest(data.requestId).catch(() => {}); };
+        res.once('close', disconnected);
+        try {
+          const started = await live.start(data); completed = true;
+          if (!res.destroyed) return send(reused ? 200 : 201, { live: started, reused });
+        } finally { res.off('close', disconnected); release(); }
+        return;
+      }
+      const liveMatch = /^\/api\/v1\/live-sessions\/([^/]+)(?:\/(stop|media))?$/.exec(route);
+      if (liveMatch) {
+        const id = decodeURIComponent(liveMatch[1]), action = liveMatch[2];
+        if (req.method === 'GET' && !action) return send(200, { live: live.get(id) });
+        if (req.method === 'GET' && action === 'media') return live.attach(id, res);
+        if (req.method === 'POST' && action === 'stop') {
+          await body(req, origin, 'empty');
+          pending++;
+          try { return send(200, { live: await live.stop(id) }); } finally { release(); }
+        }
+      }
       if (route === '/api/v1/playback-sessions' && req.method === 'POST') {
         const data = await body(req, origin, 'playbackStart');
         requireCloudSession();
@@ -158,7 +188,7 @@ function installV1Routes(server, session, options) {
         if (existing) return send(200, { job: view(existing), reused: true });
         requireCloudSession();
         validateRequest('export', data);
-        if (options.isBusy() || rangeBusy || playback.isBusy()) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
+        if (options.isBusy() || rangeBusy || playback.isBusy() || live.isBusy()) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
         pending++;
         try {
           const { devices, discovery } = await inventory();
@@ -189,7 +219,7 @@ function installV1Routes(server, session, options) {
         const existing = service.jobs.list().find(job => job.requestId === data.requestId);
         if (existing) return send(200, { job: view(existing), reused: true });
         requireCloudSession();
-        if (options.isBusy() || rangeBusy || playback.isBusy()) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
+        if (options.isBusy() || rangeBusy || playback.isBusy() || live.isBusy()) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
         pending++;
         try {
           const { devices, discovery } = await inventory();
@@ -243,11 +273,13 @@ function installV1Routes(server, session, options) {
   }
   return {
     isBusy: active,
-    loggedOut: async () => { await playback.closeActive(); exporter?.requireLogin(); },
+    loggedOut: async () => { await live.closeActive(); await playback.closeActive(); exporter?.requireLogin(); },
     async shutdown() {
       stopping = true;
+      const liveClosed = live.shutdown(); liveClosed.catch(() => {});
       // Admissions already in flight settle before we stop the resident worker.
       if (pending) await new Promise(resolve => drained.push(resolve));
+      await liveClosed;
       await playback.shutdown();
       for (const connection of ranges) connection.close();
       await exporter?.shutdown();

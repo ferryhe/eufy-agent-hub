@@ -7,9 +7,10 @@ const { serviceError, messageI18n } = require('../../api/messages.cjs');
 const { validateDay } = require('./time-window.cjs');
 const { isAuthenticated } = require('../auth/session.cjs');
 
-function waitFor(emitter, event, action, select, timeoutMs = 45000) {
+function waitFor(emitter, event, action, select, timeoutMs = 45000, signal) {
   return new Promise((resolve, reject) => {
-    const clean = () => { clearTimeout(timer); emitter.off(event, listener); };
+    const clean = () => { clearTimeout(timer); emitter.off(event, listener); signal?.removeEventListener('abort', aborted); };
+    const aborted = () => { clean(); reject(signal.reason); };
     const listener = (...args) => {
       try {
         const value = select(...args);
@@ -19,18 +20,29 @@ function waitFor(emitter, event, action, select, timeoutMs = 45000) {
     };
     const timer = setTimeout(() => { clean(); reject(serviceError(`等待 ${event} 超时`, 'service.recordings.waitTimeout', { event })); }, timeoutMs);
     emitter.on(event, listener);
-    Promise.resolve().then(action).catch(error => { clean(); reject(error); });
+    signal?.addEventListener('abort', aborted, { once: true });
+    if (signal?.aborted) aborted();
+    else Promise.resolve().then(() => { signal?.throwIfAborted(); return action(); }).catch(error => { clean(); reject(error); });
   });
 }
 
 class LocalRecordings {
   constructor(session) { this.session = session; }
 
-  async connect(serial) {
+  async connect(serial, { signal } = {}) {
+    signal?.throwIfAborted();
     if (!isAuthenticated(this.session)) throw serviceError('请先登录。', 'service.auth.loginRequired');
     if (this.camera?.getSerial() === serial && this.station?.isConnected()) return;
     this.close();
-    const inventory = await this.session.api.getDevsListDecrypted();
+    // Live cancellation can leave a cloud request in flight, but must never
+    // create a new station after its resident owner has already stopped.
+    const inventory = await (signal ? new Promise((resolve, reject) => {
+      const aborted = () => { signal.removeEventListener('abort', aborted); reject(signal.reason); };
+      signal?.addEventListener('abort', aborted, { once: true });
+      Promise.resolve().then(() => { signal?.throwIfAborted(); return this.session.api.getDevsListDecrypted(); })
+        .then(resolve, reject).finally(() => signal?.removeEventListener('abort', aborted));
+    }) : this.session.api.getDevsListDecrypted());
+    signal?.throwIfAborted();
     if (!isAuthenticated(this.session)) throw serviceError('请先登录。', 'service.auth.loginRequired');
     this.userId = this.session.api.userId;
     const raw = inventory.devices.find(device => device.device_sn === serial);
@@ -54,8 +66,10 @@ class LocalRecordings {
     const wire = { ...base, station_sn: base.device_sn, station_name: base.device_name,
       station_model: base.device_model, devices: cameras };
     this.camera = await Camera.getInstance(provider, cameras.find(device => device.device_sn === serial), { simultaneousDetections: false });
+    signal?.throwIfAborted();
     this.camera.initialize();
     this.station = await Station.getInstance(provider, wire, ip);
+    signal?.throwIfAborted();
     this.station.setConnectionType(P2PConnectionType.ONLY_LOCAL);
     this.station.initialize();
     this.status = { connected: false, device: raw.device_name, station: base.device_name, errors: [] };
@@ -64,7 +78,7 @@ class LocalRecordings {
     });
     this.station.on('connection error', () => this.status.errors.push({message:'HomeBase 连接失败', messageI18n: messageI18n('service.recordings.connectionFailed')}));
     try {
-      await waitFor(this.station, 'connect', () => this.station.connect(), () => true);
+      await waitFor(this.station, 'connect', () => this.station.connect(), () => true, 45000, signal);
       this.status.connected = true;
     } catch (error) { this.close(); throw error; }
   }
