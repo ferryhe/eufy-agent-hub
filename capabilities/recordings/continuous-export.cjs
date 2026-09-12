@@ -13,6 +13,7 @@ const writeJson = (file, value) => fs.writeFileSync(file, JSON.stringify(value, 
 // Await close, including after abort, before releasing the HomeBase's job slot.
 function runProcess(executable, args, { directory, stage, signal }) {
   return new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
     const stdout = fs.openSync(path.join(directory, `${stage}.stdout.log`), 'wx');
     const stderr = fs.openSync(path.join(directory, `${stage}.stderr.log`), 'wx');
     let error;
@@ -60,6 +61,13 @@ class ContinuousExportService {
 
   get(jobId) { return this.jobs.get(jobId); }
   whenIdle() { return this.jobs.whenIdle(); }
+  cancel(jobId) { return this.jobs.cancel(jobId); }
+  retry(jobId, identity) {
+    const existing = this.jobs.list().find(job => job.requestId === identity.requestId);
+    if (existing) return existing;
+    this.stopping.signal.throwIfAborted();
+    return this.jobs.retry(jobId, identity);
+  }
 
   requireLogin() {
     for (const job of this.jobs.list()) if (job.state === 'queued')
@@ -74,7 +82,7 @@ class ContinuousExportService {
 
   async export(context) {
     const { job, partialDir, artifactsDir, updateProgress, registerArtifact } = context;
-    const signal = this.stopping.signal;
+    const signal = AbortSignal.any([context.signal, this.stopping.signal]);
     const directory = path.join(partialDir, 'capture');
     const logs = path.join(partialDir, 'logs');
     fs.mkdirSync(logs);
@@ -83,9 +91,10 @@ class ContinuousExportService {
     let capture, acquisition, stage = 'runtime', media, completeness;
     const result = { outcome: 'failed', coverageVerified: false, validation: { passed: false },
       window, coverage: null, media: null, diagnostics: [] };
-    const run = (name, executable, args) => {
-      stage = name; signal.throwIfAborted();
-      return this.execute(executable, args, { directory: logs, stage, signal });
+    const run = async (name, progress, executable, args) => {
+      signal.throwIfAborted(); stage = name; updateProgress(stage, progress);
+      await this.execute(executable, args, { directory: logs, stage, signal });
+      signal.throwIfAborted();
     };
     const requireLogin = () => {
       if (this.session && !isAuthenticated(this.session)) {
@@ -95,35 +104,31 @@ class ContinuousExportService {
     };
     try {
       requireLogin();
-      updateProgress('runtime', 0.02);
-      await run('python-runtime', this.python, ['-c', 'import av; print(av.__version__)']);
-      await run('ffmpeg-runtime', this.ffmpeg, ['-version']);
-      stage = 'capture'; updateProgress(stage, 0.05); signal.throwIfAborted();
+      await run('python-runtime', 0.02, this.python, ['-c', 'import av; print(av.__version__)']);
+      await run('ffmpeg-runtime', 0.03, this.ffmpeg, ['-version']);
+      signal.throwIfAborted(); stage = 'capture'; updateProgress(stage, 0.05);
       requireLogin();
       acquisition = this.createCapture();
       capture = await acquisition.captureRange(serial, begin, end, directory, { signal });
       // Always close our connection before another job on this HomeBase can start.
-      acquisition.close(); acquisition = null;
+      await acquisition.close(); acquisition = null;
       result.diagnostics.push(...(capture.diagnostics || []));
       completeness = assessCompleteness(capture);
       result.coverage = { video: completeness.streams.video, audio: completeness.streams.audio,
         rangeGaps: completeness.rangeGaps };
       signal.throwIfAborted();
       if (completeness.status === 'failed') throw new Error(`No usable capture: ${completeness.reasons.join(', ')}`);
-      updateProgress('mux', 0.55);
-      await run('mux', this.python, [path.join(__dirname, 'mux.py'), directory, '--allow-partial']);
-      updateProgress('convert', 0.65);
+      await run('mux', 0.55, this.python, [path.join(__dirname, 'mux.py'), directory, '--allow-partial']);
       const candidate = path.join(directory, 'playback.mp4');
-      await run('convert', this.ffmpeg, ['-hide_banner', '-nostdin', '-n', '-copyts', '-start_at_zero',
+      await run('convert', 0.65, this.ffmpeg, ['-hide_banner', '-nostdin', '-n', '-copyts', '-start_at_zero',
         '-i', path.join(directory, 'timed.ts'), '-map', '0:v:0', '-map', '0:a?',
         '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p',
         '-fps_mode', 'vfr', '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-c:a', 'aac',
         '-metadata', `recording_timezone=${window.normalized.timezone}`, '-movflags', '+faststart+use_metadata_tags', candidate]);
-      updateProgress('decode', 0.85);
-      await run('decode', this.ffmpeg, ['-hide_banner', '-nostdin', '-v', 'error', '-xerror', '-i', candidate,
+      await run('decode', 0.85, this.ffmpeg, ['-hide_banner', '-nostdin', '-v', 'error', '-xerror', '-i', candidate,
         '-map', '0:v:0', '-map', '0:a?', '-progress', 'pipe:1', '-f', 'null', '-']);
       // Decode timestamps too: FFmpeg progress alone can be dominated by the audio tail.
-      await run('timeline', this.python, [path.join(__dirname, 'media-timeline.py'), directory]);
+      await run('timeline', 0.95, this.python, [path.join(__dirname, 'media-timeline.py'), directory]);
       media = JSON.parse(fs.readFileSync(path.join(directory, 'media-timeline.json'), 'utf8'));
       const progress = Object.fromEntries(fs.readFileSync(path.join(logs, 'decode.stdout.log'), 'utf8')
         .trim().split(/\r?\n/).map(line => line.split('=')));
@@ -170,7 +175,7 @@ class ContinuousExportService {
       result.error = { code: signal.aborted ? 'CANCELLED' : result.error?.code || 'EXPORT_STAGE_FAILED', message: error.message };
       result.diagnostics.push({ stage, message: error.message });
     } finally {
-      try { acquisition?.close(); }
+      try { await acquisition?.close(); }
       catch (error) { result.diagnostics.push({ stage: 'close', message: error.message }); result.coverageVerified = false; }
     }
     result.completeness = completeness || null;

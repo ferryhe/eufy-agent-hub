@@ -11,6 +11,10 @@ const { OUTPUT } = require('../capabilities/recordings/continuous-export.cjs');
 const { contract } = require('./v1-contract.cjs');
 const { DeviceType } = require('../adapters/eufy');
 const { DeviceVerificationRepository } = require('../capabilities/devices/verification-store.cjs');
+const { JobService } = require('../jobs/service.cjs');
+const { normalizeWindow } = require('../capabilities/recordings/time-window.cjs');
+const { cli } = require('../cli/test-helper.cjs');
+const { RecordingTools } = require('../agent/tools.cjs');
 
 const ajv = new Ajv({ strict: false }); ajv.addSchema(contract);
 function check(name, value) {
@@ -45,11 +49,15 @@ function media({ short = false, fail = false } = {}) {
 async function fixture(t, options = {}) {
   fs.mkdirSync(OUTPUT, { recursive: true });
   const directory = fs.mkdtempSync(path.join(OUTPUT, 'v1-test-'));
+  await options.beforeStart?.(path.join(directory, 'jobs'));
   const calls = { capture: 0, range: 0, sessionClosed: false, captureClosed: false };
   const raw = inventory();
   const api = { init: async () => {}, estimateDomain: async () => {}, login: async () => ({ code: 0 }),
     hasValidSession: () => true, getDevsListDecrypted: async () => ({ devices: raw }) };
   const session = new LocalEufySession(() => api);
+  if (options.authenticatedAtStartup) session.restore = async () => {
+    session.api = api; session.authenticated = true; session.state.phase = 'ready';
+  };
   session.close = () => { calls.sessionClosed = true; };
   const server = createServer({ port: 0, session, recordings: options.recordings || { close() {} }, outputRoot: directory,
     capabilityRecordsPath: options.capabilityRecordsPath || path.join(directory, 'devices', 'verification.json'),
@@ -108,6 +116,132 @@ function capabilityObservation(scope, capability, status = 'verified') {
   return { scope, capability, status, reason: 'offline_fixture_observation',
     evidence: [{ source: 'offline-api-fixture', observedAt: '2026-09-11', outcome: 'partial' }] };
 }
+
+test('HTTP operator cancel is local, persists pending cleanup, preserves FIFO and exposes cancelled evidence', async t => {
+  let entered, release;
+  const ready = new Promise(resolve => { entered = resolve; }), cleanup = new Promise(resolve => { release = resolve; });
+  t.after(() => release());
+  const f = await fixture(t, { captureRange: async (directory, { signal }) => {
+    fs.mkdirSync(directory); fs.writeFileSync(path.join(directory, 'frames.bin'), 'partial');
+    entered(); await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    await cleanup; return captureFixture();
+  } });
+  await f.login();
+  const first = (await f.json('/api/v1/exports', request, 'submission')).value.job;
+  await ready;
+  const second = (await f.json('/api/v1/exports', { ...request, requestId: 'second' }, 'submission')).value.job;
+  f.api.hasValidSession = () => false;
+  const cancelling = await f.json(`/api/v1/jobs/${first.jobId}/cancel`, {}, 'jobResponse');
+  assert.equal(cancelling.status, 202); assert.equal(cancelling.value.job.state, 'running');
+  assert.ok(cancelling.value.job.cancellationRequestedAt);
+  assert.equal((await f.json(`/api/v1/jobs/${second.jobId}`)).value.job.state, 'queued');
+  assert.equal((await f.json(`/api/v1/jobs/${second.jobId}/cancel`, {}, 'jobResponse')).value.job.state, 'cancelled');
+  release(); const done = await f.terminal(first.jobId);
+  assert.equal(done.state, 'cancelled'); assert.equal(done.stage, 'capture');
+  assert.equal(done.error.code, 'JOB_CANCELLED'); assert.match(done.error.message, /cancel/i);
+  assert.ok(done.artifacts.some(item => item.path.endsWith('frames.bin')));
+  assert.equal((await f.json(`/api/v1/jobs/${first.jobId}/cancel`, {}, 'jobResponse')).status, 200);
+  assert.equal((await f.json('/api/v1/exports', { requestId: request.requestId }, 'submission')).value.job.jobId, first.jobId);
+  assert.equal((await f.json('/api/v1/jobs/missing/cancel', {})).status, 404);
+});
+
+test('HTTP explicit retry preserves original diagnostics and request identity, validates input and login', async t => {
+  let fail = true;
+  const f = await fixture(t, { execute: (...args) => media({ fail })(...args) }); await f.login();
+  const first = (await f.json('/api/v1/exports', request, 'submission')).value.job;
+  const failed = await f.terminal(first.jobId); assert.equal(failed.state, 'failed');
+  assert.equal((await f.json(`/api/v1/jobs/${first.jobId}/retry`, {})).status, 400);
+  assert.equal((await f.json(`/api/v1/jobs/${first.jobId}/retry`, { requestId: 'try', serial: 'changed' })).status, 400);
+  f.api.hasValidSession = () => false;
+  assert.equal((await f.json(`/api/v1/jobs/${first.jobId}/retry`, { requestId: 'try' })).status, 401);
+  f.api.hasValidSession = () => true; fail = false;
+  const retry = await f.json(`/api/v1/jobs/${first.jobId}/retry`, { requestId: 'try' }, 'submission');
+  assert.equal(retry.status, 202); assert.equal(retry.value.job.retryOfJobId, first.jobId); assert.equal(retry.value.job.attempt, 2);
+  const done = await f.terminal(retry.value.job.jobId); assert.equal(done.state, 'succeeded');
+  assert.deepEqual((await f.json(`/api/v1/jobs/${first.jobId}`, undefined, 'jobResponse')).value.job, failed);
+  f.api.hasValidSession = () => false;
+  const duplicate = await f.json(`/api/v1/jobs/${first.jobId}/retry`, { requestId: 'try' }, 'submission');
+  assert.equal(duplicate.status, 200); assert.equal(duplicate.value.reused, true); assert.equal(duplicate.value.job.jobId, done.jobId);
+  assert.equal((await f.json('/api/v1/exports', { requestId: request.requestId }, 'submission')).value.job.jobId, first.jobId);
+  f.api.hasValidSession = () => true;
+  assert.equal((await f.json(`/api/v1/jobs/${done.jobId}/retry`, { requestId: 'no' })).status, 409);
+  assert.equal((await f.json(`/api/v1/jobs/${done.jobId}/cancel`, {})).status, 409);
+});
+
+test('HTTP startup recovers queued work without a triggering request and shows interrupted historical evidence', async t => {
+  let interruptedId, queuedId;
+  const f = await fixture(t, { beforeStart: async outputRoot => {
+    const jobs = new JobService({ outputRoot, worker: async () => ({ outcome: 'failed' }) });
+    const input = { serial: request.serial, window: normalizeWindow(request) };
+    const interrupted = jobs.submit({ requestId: 'old', homeBaseId: 'base', input });
+    const queued = jobs.submit({ requestId: 'waiting', homeBaseId: 'base', input });
+    interruptedId = interrupted.jobId; queuedId = queued.jobId; await jobs.whenIdle();
+    fs.writeFileSync(path.join(interrupted.partialDir, 'evidence.log'), 'interrupted');
+    fs.writeFileSync(interrupted.metadataPath, JSON.stringify({ ...interrupted, state: 'running', stage: 'mux',
+      artifacts: [{ path: 'partial/evidence.log', metadata: { role: 'diagnostic' } }] }));
+    fs.writeFileSync(queued.metadataPath, JSON.stringify(queued));
+  } });
+  // This fixture starts logged out: recovered work must explicitly fail LOGIN_REQUIRED, never capture.
+  const disk = () => JSON.parse(fs.readFileSync(path.join(f.directory, 'jobs', queuedId, 'metadata.json')));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(disk().state, 'failed'); assert.equal(disk().error.code, 'LOGIN_REQUIRED');
+  const old = (await f.json(`/api/v1/jobs/${interruptedId}`, undefined, 'jobResponse')).value.job;
+  assert.equal(old.state, 'failed'); assert.equal(old.stage, 'mux'); assert.equal(old.error.code, 'JOB_INTERRUPTED');
+  assert.equal(old.artifacts[0].playable, false);
+  assert.equal(await fetch(f.origin + old.artifacts[0].url).then(r => r.text()), 'interrupted');
+  assert.equal(f.calls.capture, 0);
+  for (const command of ['get', 'wait']) {
+    const response = await cli(['--url', f.origin, '--json', '--timeout', '2000', 'jobs', command, interruptedId]);
+    assert.equal(response.code, 8); assert.equal(response.value.job.error.code, 'JOB_INTERRUPTED');
+  }
+  const tools = new RecordingTools({ baseUrl: f.origin });
+  const observed = await tools.wait({ jobId: interruptedId, timeoutMs: 100, pollMs: 10 });
+  assert.equal(observed.status, 'failed'); assert.equal(observed.error.code, 'JOB_INTERRUPTED');
+  assert.equal(observed.complete, false);
+});
+
+test('HTTP recovered authenticated work owns the session and cancellation controls before any new submission', async t => {
+  let queuedId, entered, release;
+  const ready = new Promise(resolve => { entered = resolve; }), cleanup = new Promise(resolve => { release = resolve; });
+  t.after(() => release());
+  const f = await fixture(t, { authenticatedAtStartup: true, beforeStart: async outputRoot => {
+    const jobs = new JobService({ outputRoot, worker: async () => ({ outcome: 'failed' }) });
+    const queued = jobs.submit({ requestId: 'recovered', homeBaseId: 'base', input: { serial: request.serial, window: normalizeWindow(request) } });
+    queuedId = queued.jobId; await jobs.whenIdle(); fs.writeFileSync(queued.metadataPath, JSON.stringify(queued));
+  }, captureRange: async (directory, { signal }) => {
+    fs.mkdirSync(directory); fs.writeFileSync(path.join(directory, 'frames.bin'), 'recovered bytes');
+    entered(); await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    await cleanup; return captureFixture();
+  } });
+  await ready;
+  assert.equal((await f.json('/api/v1/session', undefined, 'session')).value.busy, true);
+  assert.equal((await f.json('/api/v1/session/refresh', {})).status, 409);
+  assert.equal((await f.json('/api/v1/devices/camera/recording-ranges', { day: request.day, start: request.start, end: request.end })).status, 409);
+  assert.equal((await f.json(`/api/v1/jobs/${queuedId}/cancel`, {}, 'jobResponse')).status, 202);
+  release(); assert.equal((await f.terminal(queuedId)).state, 'cancelled');
+  assert.equal(f.calls.capture, 1);
+});
+
+test('HTTP concurrent retry identities create one attempt and recheck expiry after inventory waits', async t => {
+  const f = await fixture(t, { execute: media({ fail: true }) }); await f.login();
+  const first = (await f.json('/api/v1/exports', request, 'submission')).value.job; await f.terminal(first.jobId);
+  for (const expired of [false, true]) {
+    let entered, release, count = 0;
+    const ready = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
+    f.api.getDevsListDecrypted = async () => { if (++count === 2) entered(); await gate; return { devices: f.raw }; };
+    const requestId = expired ? 'expired-retry' : 'shared-retry';
+    const attempts = [1, 2].map(() => f.json(`/api/v1/jobs/${first.jobId}/retry`, { requestId }));
+    await ready;
+    if (expired) f.api.hasValidSession = () => false;
+    release(); const results = await Promise.all(attempts);
+    assert.deepEqual(results.map(r => r.status).sort(), expired ? [401, 401] : [200, 202]);
+    if (!expired) {
+      for (const result of results) check('submission', result.value);
+      assert.equal(results[0].value.job.jobId, results[1].value.job.jobId);
+      await f.terminal(results[0].value.job.jobId);
+    }
+  }
+});
 
 test('HTTP capability queries consume durable incremental records, expose four states and survive repository reopen', async t => {
   const f = await fixture(t);

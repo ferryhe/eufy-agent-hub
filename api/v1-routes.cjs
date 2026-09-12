@@ -34,9 +34,11 @@ function artifactList(job) {
 }
 function jobView(job, loginRequired = false) {
   const { jobId, requestId, homeBaseId, state, stage, progress, createdAt, updatedAt, input, result } = job;
-  const code = loginRequired || job.error?.code === 'LOGIN_REQUIRED' ? 'LOGIN_REQUIRED' : state === 'cancelled' ? 'JOB_CANCELLED' : state !== 'failed' ? null
+  const code = loginRequired || job.error?.code === 'LOGIN_REQUIRED' ? 'LOGIN_REQUIRED' : state === 'cancelled' ? 'JOB_CANCELLED'
+    : job.error?.code === 'JOB_INTERRUPTED' ? 'JOB_INTERRUPTED' : state !== 'failed' ? null
     : result?.outcome === 'partial' ? 'PARTIAL_RECORDING' : 'EXPORT_FAILED';
   return { jobId, requestId, homeBaseId, serial: input.serial, window: input.window,
+    retryOfJobId: job.retryOfJobId || null, attempt: job.attempt || 1, cancellationRequestedAt: job.cancellationRequestedAt || null,
     state, stage: loginRequired ? 'login_required' : stage, progress, createdAt, updatedAt, result, artifacts: artifactList(job),
     error: code ? { code, message: job.error?.message || code } : null };
 }
@@ -52,10 +54,12 @@ function installV1Routes(server, session, options) {
   };
   const drained = [];
   const release = () => { if (--pending === 0) for (const resolve of drained.splice(0)) resolve(); };
-  const accepted = new Set();
   const ranges = new Set();
   const getExporter = () => exporter ||= new ContinuousExportService({ session, ...options.exports });
-  const active = () => pending > 0 || [...accepted].some(id => ['queued', 'running'].includes(exporter?.get(id)?.state));
+  const active = () => pending > 0 || Boolean(exporter?.jobs.list().some(job => ['queued', 'running'].includes(job.state)));
+  // Listening follows session restoration. Recover durable work without a new
+  // caller request, and include that work in the existing session/media guards.
+  server.once('listening', getExporter);
   const original = server.listeners('request')[0];
   server.removeListener('request', original);
   server.on('request', async (req, res) => {
@@ -139,7 +143,37 @@ function installV1Routes(server, session, options) {
           let job;
           try { job = service.submit({ ...data, homeBaseId: device.homeBaseId }); }
           catch (error) { throw fault(409, 'JOB_UNAVAILABLE', error.message); }
-          accepted.add(job.jobId);
+          return send(202, { job: view(job), reused: false });
+        } finally { release(); }
+      }
+      const control = /^\/api\/v1\/jobs\/([^/]+)\/(cancel|retry)$/.exec(route);
+      if (control && req.method === 'POST') {
+        const data = await body(req, origin, control[2] === 'cancel' ? 'empty' : 'retry');
+        if (stopping) throw fault(503, 'SERVICE_STOPPING', 'The resident service is shutting down.');
+        const service = getExporter(), previous = service.get(control[1]);
+        if (!previous) throw fault(404, 'JOB_NOT_FOUND', 'Unknown job.');
+        if (control[2] === 'cancel') {
+          let job;
+          try { job = service.cancel(previous.jobId); }
+          catch (error) { throw fault(409, 'JOB_UNAVAILABLE', error.message); }
+          return send(job.state === 'running' ? 202 : 200, { job: view(job) });
+        }
+        const existing = service.jobs.list().find(job => job.requestId === data.requestId);
+        if (existing) return send(200, { job: view(existing), reused: true });
+        requireCloudSession();
+        if (options.isBusy() || rangeBusy) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
+        pending++;
+        try {
+          const devices = await inventory();
+          if (stopping) throw fault(503, 'SERVICE_STOPPING', 'The resident service is shutting down.');
+          const reused = service.jobs.list().find(job => job.requestId === data.requestId);
+          if (reused) return send(200, { job: view(reused), reused: true });
+          const device = findDevice(devices, previous.input.serial); requireSupported(device);
+          if (device.homeBaseId !== previous.homeBaseId)
+            throw fault(409, 'JOB_UNAVAILABLE', 'The camera HomeBase changed. Submit a new export after checking its device identity.');
+          let job;
+          try { job = service.retry(previous.jobId, data); }
+          catch (error) { throw fault(409, 'JOB_UNAVAILABLE', error.message); }
           return send(202, { job: view(job), reused: false });
         } finally { release(); }
       }

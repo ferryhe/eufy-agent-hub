@@ -195,20 +195,64 @@ test('media subprocess abort waits for process close and keeps its logs', async 
   assert.ok(fs.existsSync(path.join(directory, 'wait.stderr.log')));
 });
 
-test('restart after a real resident process stops preserves unfinished capture and blocks HomeBase replay', async t => {
+test('restart after a real resident process stops interrupts capture without replay and allows explicit retry', async t => {
   const directory = output(t);
   const child = fork(path.join(__dirname, 'fixtures/continuous-export-resident.cjs'), [directory], { silent: true });
   t.after(() => child.kill());
   const [accepted] = await once(child, 'message');
   const exited = once(child, 'exit'); child.kill(); await exited;
-  const restored = new ContinuousExportService({ outputRoot: directory });
+  const { exporter: restored, calls } = service(t, { outputRoot: directory });
   const job = restored.get(accepted.jobId);
-  assert.equal(job.state, 'running'); assert.equal(job.stage, 'capture');
+  assert.equal(job.state, 'failed'); assert.equal(job.stage, 'capture');
+  assert.equal(job.error.code, 'JOB_INTERRUPTED');
   assert.ok(fs.existsSync(path.join(job.partialDir, 'capture/frames.bin')));
   assert.equal(restored.submit(request()).jobId, job.jobId);
-  assert.throws(() => restored.submit(request('new')), /unfinished jobs.*recovery is not implemented/);
   await restored.whenIdle();
-  assert.equal(restored.get(job.jobId).state, 'running');
+  assert.equal(calls.length, 0);
+  const retry = restored.retry(job.jobId, { requestId: 'retry' });
+  await restored.whenIdle();
+  assert.equal(calls.length, 1); assert.equal(restored.get(retry.jobId).state, 'succeeded');
+  assert.equal(restored.get(job.jobId).state, 'failed');
+});
+
+test('operator cancellation at every media stage stops later work, waits for cleanup and keeps last stage', async t => {
+  for (const stoppedStage of ['python-runtime', 'ffmpeg-runtime', 'capture', 'mux', 'convert', 'decode', 'timeline']) {
+    let started, cleanup; const ready = new Promise(resolve => { started = resolve; });
+    const drained = new Promise(resolve => { cleanup = resolve; }); t.after(() => cleanup());
+    const stages = [], execute = fakeMedia({ stages });
+    const wait = async signal => {
+      started(); await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+      await drained;
+    };
+    const { exporter, calls } = service(t, {
+      execute: async (exe, args, options) => {
+        await execute(exe, args, options);
+        if (options.stage === stoppedStage) await wait(options.signal);
+      },
+      captureRange: stoppedStage === 'capture' ? async ({ signal }) => wait(signal) : undefined,
+    });
+    const job = exporter.submit(request()), queued = exporter.submit(request('second'));
+    await ready; const before = [...stages];
+    const pending = exporter.cancel(job.jobId);
+    assert.equal(pending.state, 'running'); assert.equal(exporter.get(queued.jobId).state, 'queued');
+    assert.equal(exporter.get(job.jobId).stage, stoppedStage);
+    // Cancel the follower so only the first job's later stages are measured.
+    exporter.cancel(queued.jobId); cleanup(); await exporter.whenIdle();
+    const done = exporter.get(job.jobId);
+    assert.equal(done.state, 'cancelled'); assert.equal(done.stage, stoppedStage);
+    assert.deepEqual(stages, before); assert.equal(done.result.media, null);
+    assert.ok(done.artifacts.some(artifact => artifact.path === 'partial/result.json'));
+    assert.ok(done.result.diagnostics.some(item => item.stage === stoppedStage));
+    assert.equal(calls.length, stoppedStage.endsWith('runtime') ? 0 : 1);
+  }
+});
+
+test('an already aborted subprocess never starts or allocates stage logs', async t => {
+  const directory = output(t), controller = new AbortController(); controller.abort(new Error('Cancelled before stage'));
+  const marker = path.join(directory, 'should-not-exist');
+  await assert.rejects(async () => runProcess(process.execPath, ['-e', `require('fs').writeFileSync(${JSON.stringify(marker)}, 'started')`],
+    { directory, stage: 'aborted', signal: controller.signal }), /Cancelled before stage/);
+  assert.deepEqual(fs.readdirSync(directory), []);
 });
 
 test('invalid timezone windows and output roots fail before allocating a job', t => {

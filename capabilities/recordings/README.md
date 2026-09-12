@@ -49,7 +49,7 @@ for defaults, DST rejection, device-calendar bounds and unknown actual coverage.
 
 Commands 6000/6001 have been independently called and used to obtain a short clip. This capability no longer relies on the earlier 1025/1026 guesses.
 See [CONTINUOUS_PLAYBACK.md](CONTINUOUS_PLAYBACK.md) for commands, usage, and limitations.
-The 20-minute hardware capture in Issue #6 has real gaps and remains partial. Continuous jobs automate conversion and validation without changing that result. Automatic recovery after process restart remains Phase B of Issue #1; unfinished jobs are preserved and never replayed silently.
+The 20-minute hardware capture in Issue #6 has real gaps and remains partial. Continuous jobs automate conversion and validation without changing that result. [Durable jobs](../../jobs/README.md) recover queued work after restart; previously running work is retained as failed with `JOB_INTERRUPTED`. Operator cancellation waits for owned cleanup, and explicit retry creates a fresh linked attempt. Failed work is never replayed silently.
 
 Tests: run `node --test capabilities/recordings/*.test.cjs` from the repository root after building the protocol adapter dependency.
 ## Continuous export jobs
