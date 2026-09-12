@@ -9,11 +9,11 @@ const cached = getDevices(session);
 const refreshed = await refreshDevices(session);
 ```
 
-Both methods return `{ devices, diagnostics, message }`. Devices contain `serial`, `name`, `model`, and `capabilities.eventRecordings`; entries are deduplicated by serial number, and unknown models are retained. Results are copies, so changing a returned list does not change the session.
+Both methods return `{ devices, discovery, diagnostics, message }`. Devices contain `serial`, `name`, `model`, and `capabilities.eventRecordings`; entries are deduplicated by serial number, and unknown models are retained. Results are copies, so changing a returned list or discovery state does not change the session.
 
 The recording selector only offers entries with `capabilities.eventRecordings === true`. This requires a camera device type recognized by the protocol library, a declared download command, and a T8030 parent in the inventory. The recording backend repeats the same check against fresh inventory before constructing a camera or connecting. Unknown or missing device types remain visible in discovery but cannot be selected for recording extraction. This eligibility flag is not a guarantee of hardware acceptance for every model or firmware.
 
-`getDevices` returns cached data without making a request. `refreshDevices` requires a logged-in session; if discovery fails, it returns the previous list and failure diagnostics. Interfaces and agents must check `diagnostics` rather than treating cached data as a successful refresh.
+`getDevices` returns cached data without making a request. `refreshDevices` requires a logged-in session; if discovery fails before a valid page, it returns the previous list and failure diagnostics with `discovery.status: 'failed'`, `completeness: 'incomplete'`, `retryable: true` and `stale: true` when old devices remain. Successful requests return `completeness: 'unknown'`, even below 100 entries. Interfaces and agents must inspect `discovery`; a successful request does not prove a complete account list. See the [protocol evidence, field definitions and offline page model](DISCOVERY.md).
 
 ## Maturity and validation
 
@@ -119,7 +119,7 @@ or associated by model automatically. See the [API contract](../../api/v1.md).
 
 - Legacy session summaries do not yet include the richer projection above.
 - Existing real-device evidence lacks firmware values, so current firmware cannot inherit its verified status. Agents cannot assume arbitrary models support playback, talkback, or settings control.
-- Inventory retrieval is not paginated. Responses containing at least 100 entries produce a warning that the list may be incomplete.
+- Mega continuation is unverified, so production makes one known request and always returns structured unknown completeness on success. Responses with at least 100 raw entries also preserve the existing warning and `limitReached: true`, even after deduplication. Multi-page merge/failure tests exercise a local model, not a verified server continuation API; see [DISCOVERY.md](DISCOVERY.md).
 - Device settings, arming, pan/tilt, lights, and door lock controls are not implemented in this directory.
 
 See the [issue drafts](../../docs/issues/auth-devices.md) for planned work.

@@ -1,5 +1,6 @@
 const { MegaHTTPApi, ResponseErrorCode: Code } = require('../../adapters/eufy');
 const { supportsEventRecordings } = require('../devices/recording-support.cjs');
+const { initialDiscovery, readDeviceInventory } = require('../devices/discovery.cjs');
 const { messageI18n, serviceError, setMessage } = require('../../api/messages.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -14,7 +15,7 @@ class LocalEufySession {
   constructor(createApi = options => new MegaHTTPApi(options), { sessionPath } = {}) {
     this.createApi = createApi;
     this.sessionPath = sessionPath;
-    this.state = { phase: 'idle', message: '请使用加拿大（CA）地区登录你的 eufy 账号。', devices: [], diagnostics: [] };
+    this.state = { phase: 'idle', message: '请使用加拿大（CA）地区登录你的 eufy 账号。', devices: [], discovery: initialDiscovery(), diagnostics: [] };
     this.state.messageI18n = messageI18n('service.auth.idle');
     this.state.diagnosticsI18n = [];
     this.authenticated = false;
@@ -25,6 +26,7 @@ class LocalEufySession {
     if (this.authenticated && !valid) {
       this.state.phase = 'login_required';
       this.state.devices = [];
+      this.state.discovery = initialDiscovery();
       setMessage(this.state, '登录已过期，请重新登录。', messageI18n('service.auth.expired'));
     }
     return valid;
@@ -65,7 +67,7 @@ class LocalEufySession {
     this.api = undefined;
     this.credentials = undefined;
     this.captchaId = undefined;
-    this.state = { phase: 'login_required', devices: [], diagnostics: [], diagnosticsI18n: [] };
+    this.state = { phase: 'login_required', devices: [], discovery: initialDiscovery(), diagnostics: [], diagnosticsI18n: [] };
     setMessage(this.state, key === 'service.auth.restoreFailed'
       ? '无法恢复登录，请重新登录。' : '已登出，请重新登录。', messageI18n(key));
     if (this.sessionPath) {
@@ -78,7 +80,7 @@ class LocalEufySession {
     this.logout();
     this.credentials = { email: email.trim(), password };
     this.captchaId = undefined;
-    this.state = { phase: 'busy', message: '正在登录 eufy…', country: country.trim().toUpperCase(), devices: [], diagnostics: [] };
+    this.state = { phase: 'busy', message: '正在登录 eufy…', country: country.trim().toUpperCase(), devices: [], discovery: initialDiscovery(), diagnostics: [] };
     this.state.messageI18n = messageI18n('service.auth.signingIn');
     this.state.diagnosticsI18n = [];
     this.api = this.createApi({ ab: this.state.country.toLowerCase(), phoneModel: 'Local Eufy Client' });
@@ -141,12 +143,15 @@ class LocalEufySession {
     this.state.diagnostics = [];
     this.state.diagnosticsI18n = [];
     try {
-      const inventory = await this.api.getDevsListDecrypted();
+      const inventory = await readDeviceInventory(this.api);
       if (!this.isAuthenticated()) throw serviceError('登录已过期，请重新登录。', 'service.auth.expired');
-      if (!inventory || !Array.isArray(inventory.devices)) throw serviceError('设备列表格式与预期不符。', 'service.devices.invalidInventory');
+      this.state.discovery = inventory.discovery;
+      if (inventory.error && !inventory.discovery.pagesRead) {
+        this.state.discovery.stale = this.state.devices.length > 0;
+        throw inventory.error;
+      }
       const devices = new Map();
       for (const raw of inventory.devices) {
-        if (!raw || typeof raw.device_sn !== 'string' || !raw.device_sn) throw serviceError('设备列表缺少设备标识。', 'service.devices.missingSerial');
         devices.set(raw.device_sn, {
           serial: raw.device_sn,
           name: typeof raw.device_name === 'string' && raw.device_name ? raw.device_name : '未命名设备',
@@ -157,12 +162,13 @@ class LocalEufySession {
         });
       }
       this.state.devices = [...devices.values()];
+      if (inventory.error) throw inventory.error;
       this.state.phase = 'connected';
       setMessage(this.state, devices.size
         ? `已登录（${this.state.country}），已从 eufy 新接口加载 ${devices.size} 台设备。`
         : `已登录（${this.state.country}），eufy 新接口返回了空设备列表。`,
       messageI18n(devices.size ? 'service.devices.loaded' : 'service.devices.empty', { country: this.state.country, count: devices.size }));
-      if (inventory.devices.length >= 100) {
+      if (inventory.discovery.limitReached) {
         this.state.diagnostics.push('设备数量达到本次请求上限，列表可能不完整。');
         this.state.diagnosticsI18n.push(messageI18n('service.devices.limitReached'));
       }

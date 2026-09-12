@@ -6,6 +6,7 @@ const { normalizeWindow } = require('../capabilities/recordings/time-window.cjs'
 const { recordingSegments } = require('../capabilities/recordings/continuous-completeness.cjs');
 const { describeDevices, queryCapability } = require('../capabilities/devices/capabilities.cjs');
 const { DeviceVerificationRepository } = require('../capabilities/devices/verification-store.cjs');
+const { readDeviceInventory, failedDiscovery } = require('../capabilities/devices/discovery.cjs');
 const { serveMedia } = require('./legacy-recording-routes.cjs');
 const { contract, validateRequest } = require('./v1-contract.cjs');
 const { isAuthenticated } = require('../capabilities/auth/session.cjs');
@@ -98,14 +99,14 @@ function installV1Routes(server, session, options) {
         pending++;
         if (match[2]) rangeBusy = true;
         try {
-          const devices = await inventory();
-          if (!match[1]) return send(200, { devices });
-          const device = findDevice(devices, decodeURIComponent(match[1]));
+          const { devices, discovery } = await inventory();
+          if (!match[1]) return send(200, { devices, discovery });
+          const device = findDevice(devices, decodeURIComponent(match[1]), discovery);
           if (match[3]) {
             const capability = decodeURIComponent(match[3]);
-            return send(200, { serial: device.serial, capability, ...queryCapability(device, capability) });
+            return send(200, { serial: device.serial, capability, ...queryCapability(device, capability), discovery });
           }
-          if (!match[2]) return send(200, { device });
+          if (!match[2]) return send(200, { device, discovery });
           requireSupported(device);
           const window = windowOf(data);
           const begin = Date.parse(window.normalized.start) / 1000, end = Date.parse(window.normalized.end) / 1000;
@@ -133,11 +134,11 @@ function installV1Routes(server, session, options) {
         if (options.isBusy() || rangeBusy) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
         pending++;
         try {
-          const devices = await inventory();
+          const { devices, discovery } = await inventory();
           // Another HTTP request can submit this identity while inventory is in flight.
           const reused = service.jobs.list().find(job => job.requestId === data.requestId);
           if (reused) return send(200, { job: view(reused), reused: true });
-          const device = findDevice(devices, data.serial);
+          const device = findDevice(devices, data.serial, discovery);
           requireSupported(device);
           windowOf(data); // Shared contract supplies stable validation errors before durable submission.
           let job;
@@ -164,11 +165,11 @@ function installV1Routes(server, session, options) {
         if (options.isBusy() || rangeBusy) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
         pending++;
         try {
-          const devices = await inventory();
+          const { devices, discovery } = await inventory();
           if (stopping) throw fault(503, 'SERVICE_STOPPING', 'The resident service is shutting down.');
           const reused = service.jobs.list().find(job => job.requestId === data.requestId);
           if (reused) return send(200, { job: view(reused), reused: true });
-          const device = findDevice(devices, previous.input.serial); requireSupported(device);
+          const device = findDevice(devices, previous.input.serial, discovery); requireSupported(device);
           if (device.homeBaseId !== previous.homeBaseId)
             throw fault(409, 'JOB_UNAVAILABLE', 'The camera HomeBase changed. Submit a new export after checking its device identity.');
           let job;
@@ -195,24 +196,22 @@ function installV1Routes(server, session, options) {
       }
       throw fault(404, 'NOT_FOUND', 'Unknown v1 endpoint.');
     } catch (error) {
-      if (!res.headersSent) send(error.status || 500, { error: { code: error.status ? error.code : 'INTERNAL_ERROR', message: error.message } });
+      if (!res.headersSent) send(error.status || 500, { error: { code: error.status ? error.code : 'INTERNAL_ERROR', message: error.message },
+        ...(error.discovery ? { discovery: error.discovery } : {}) });
       else res.destroy();
     }
   });
   async function inventory() {
     requireCloudSession();
+    const data = await readDeviceInventory(session.api);
+    requireCloudSession();
+    if (data.error) throw Object.assign(fault(503, 'DEVICE_UNAVAILABLE', data.error.message), { discovery: data.discovery });
     try {
-      const data = await session.api.getDevsListDecrypted();
-      requireCloudSession();
-      if (!Array.isArray(data?.devices)) throw new Error('Device inventory is unavailable.');
-      let observations;
-      try { observations = deviceRepository.read(); }
-      catch (error) { throw fault(503, 'CAPABILITY_RECORDS_UNAVAILABLE', `Device verification records are unavailable: ${error.message}`); }
-      return describeDevices(data.devices, observations);
+      const observations = deviceRepository.read();
+      return { devices: describeDevices(data.devices, observations), discovery: data.discovery };
     } catch (error) {
-      requireCloudSession();
-      if (error.code === 'CAPABILITY_RECORDS_UNAVAILABLE') throw error;
-      throw fault(503, 'DEVICE_UNAVAILABLE', error.message);
+      throw Object.assign(fault(503, 'CAPABILITY_RECORDS_UNAVAILABLE', `Device verification records are unavailable: ${error.message}`),
+        { discovery: failedDiscovery(data.discovery, 'capability_records_unavailable') });
     }
   }
   return {
@@ -227,9 +226,9 @@ function installV1Routes(server, session, options) {
     },
   };
 }
-function findDevice(devices, serial) {
+function findDevice(devices, serial, discovery) {
   const device = devices.find(item => item.serial === serial);
-  if (!device) throw fault(404, 'DEVICE_NOT_FOUND', 'Unknown device.');
+  if (!device) throw Object.assign(fault(404, 'DEVICE_NOT_FOUND', 'Device was not present in the retrieved inventory.'), { discovery });
   return device;
 }
 function requireSupported(device) {
