@@ -50,8 +50,8 @@ The stable device projection contains `serial`, `name`, nullable `model`,
 nullable `homeBaseId`/`channel`, `firmware: { main, secondary }`, `availability`,
 `state: { inventoryStatus, reason, observedAt }`, `recordingExport`,
 `verificationScope`, `verificationHistory`, and `capabilities`.
-The six capability keys are `continuousRecordingQuery`, `continuousRecordingExport`,
-`eventRecordings`, `liveVideo`, `talkback`, and `rtsp`. Every entry has
+The seven capability keys are `continuousRecordingQuery`, `continuousRecordingExport`,
+`continuousPlaybackControls`, `eventRecordings`, `liveVideo`, `talkback`, and `rtsp`. Every entry has
 `{ status, reason, evidence }`. An unknown capability query returns this same shape
 with `status: 'unknown'` and `reason: 'capability_not_catalogued'`.
 
@@ -69,6 +69,26 @@ An eligible T8600/T8030 pair starts with `protocol_hint`, not device-wide verifi
 status. These two fields answer different questions. The old `continuousDevices`
 helper is retained for internal recording eligibility compatibility; public v1
 responses use the device-specific status described here.
+
+`continuousPlaybackControls` reports `protocol_hint` only for the same constrained
+T8600/T8030 recording path, including a recognized recording camera type, resolved
+parent and nonnegative integer channel. Its reason is
+`android_6001_controls_require_device_firmware_verification`; other devices,
+including a standalone HomeBase, report `unknown` with
+`no_verified_continuous_playback_controls_path`. Query it through
+`GET /api/v1/devices/:serial/capabilities/continuousPlaybackControls`; the response
+identifies the device serial and includes the same full `verificationScope` as the
+device list/single-device responses. The default remains an unverified Android command 6001 lead.
+Its `controls` is `{ pauseResumeAtSpeed1: false, verifiedStartSpeeds: [] }` until an
+exact, fully known scope has a persisted `verified` record with typed control details.
+The only recordable start values are 1, 2, 4 and 16; each must be explicitly listed
+in that scope's record. Value 8 remains unconfirmed. Free-text evidence, a bare
+`verified` status, query evidence or partial-export evidence cannot enable controls.
+The [resident playback API](../recordings/PLAYBACK_SESSIONS.md) exposes start/close
+for listed values and pause/resume only for speed 1 with `pauseResumeAtSpeed1: true`.
+Main and secondary firmware must be known for both camera and HomeBase to enable
+these operations. See the
+[remaining hardware checks](../recordings/CONTINUOUS_PLAYBACK.md#playback-controls-verification-gate-issue-9).
 
 Records are ordinary caller-owned JSON arrays. `recordCapability` returns an
 independent copy with just the requested capability/scope replaced. It rejects unknown capability/status,

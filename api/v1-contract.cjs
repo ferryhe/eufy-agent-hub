@@ -15,7 +15,10 @@ const errorCodes = ['UNAUTHENTICATED', 'UNSUPPORTED_DEVICE', 'DEVICE_UNAVAILABLE
   'SERVICE_BUSY', 'SERVICE_STOPPING', 'INVALID_REQUEST', 'INVALID_WINDOW', 'INVALID_TIMEZONE',
   'AMBIGUOUS_OR_NONEXISTENT_TIME', 'JSON_REQUIRED', 'INPUT_TOO_LONG', 'LOCAL_HOST_REQUIRED',
   'LOCAL_ORIGIN_REQUIRED', 'JOB_UNAVAILABLE', 'JOB_NOT_FOUND', 'ARTIFACT_NOT_FOUND', 'NOT_FOUND',
-  'INTERNAL_ERROR', 'PARTIAL_RECORDING', 'EXPORT_FAILED', 'JOB_CANCELLED', 'JOB_INTERRUPTED', 'LOGIN_REQUIRED', 'CAPABILITY_RECORDS_UNAVAILABLE'];
+  'INTERNAL_ERROR', 'PARTIAL_RECORDING', 'EXPORT_FAILED', 'JOB_CANCELLED', 'JOB_INTERRUPTED', 'LOGIN_REQUIRED', 'CAPABILITY_RECORDS_UNAVAILABLE',
+  'PLAYBACK_SESSION_NOT_FOUND', 'CONTROL_NOT_VERIFIED', 'CONTROL_INACTIVE', 'CONTROL_SCOPE_CHANGED', 'CONTROL_CONTEXT_UNAVAILABLE',
+  'CONTROL_CONNECTION_LOST', 'CONTROL_REJECTED', 'CONTROL_RESPONSE_INVALID', 'CONTROL_SEND_FAILED', 'CONTROL_TIMEOUT',
+  'CONTROL_STARTUP_TIMEOUT', 'CONTROL_MEDIA_TIMEOUT', 'CONTROL_CLEANUP_FAILED', 'PAUSE_MEDIA_ADVANCED'];
 const error = object({ code: { enum: errorCodes }, message: string });
 const discovery = object({ status: { enum: ['not_requested', 'succeeded', 'failed'] },
   completeness: { enum: ['unknown', 'incomplete'] }, pagination: { const: 'unverified' },
@@ -48,6 +51,17 @@ const job = object({ jobId: string, requestId: string, homeBaseId: string, seria
   progress: { type: 'number', minimum: 0, maximum: 1 }, createdAt: string, updatedAt: string,
   result, artifacts: array(artifact), error: { anyOf: [error, { type: 'null' }] },
 });
+const playback = object({ sessionId: nonempty,
+  state: { enum: ['opening', 'playing', 'pausing', 'paused', 'resuming', 'closing', 'closed', 'failed'] },
+  verificationScope: deviceSchemas.scope, speed: { enum: [1, 2, 4, 16] },
+  positionMs: { type: ['integer', 'null'] }, pauseExpiresAtMs: { type: ['integer', 'null'] }, maxPauseMs: { const: 30000 },
+  allowedOperations: array({ enum: ['pause', 'resume', 'close'] }), verifiedStartSpeeds: deviceSchemas.controls.properties.verifiedStartSpeeds,
+  stopConfirmed: { type: 'boolean' }, error: { anyOf: [error, { type: 'null' }] },
+  operations: array(object({ operation: { enum: ['start', 'pause', 'resume', 'stop'] }, sentAtMs: { type: 'integer' },
+    receivedAtMs: { type: ['integer', 'null'] }, returnCode: { type: ['integer', 'null'] } })),
+  channelChecks: object(Object.fromEntries(['queryMatched', 'queryRejected', 'commandMatched', 'commandRejected', 'mediaMatched', 'mediaRejected']
+    .map(name => [name, { type: 'integer', minimum: 0 }]))), channelIsolation: { const: 'unverified' },
+});
 const contract = {
   $schema: 'http://json-schema.org/draft-07/schema#', $id: 'urn:eufy-agent-hub:api:v1',
   title: 'Eufy resident recording API v1',
@@ -60,11 +74,14 @@ const contract = {
     retry: object({ requestId: nonempty }),
     window: object(time, ['day', 'start', 'end']),
     export: object({ requestId: nonempty, serial: nonempty, ...time }, ['requestId', 'serial', 'day', 'start', 'end']),
+    playbackStart: object({ serial: nonempty, ...time, speed: { type: 'number' } }, ['serial', 'day', 'start', 'end']),
+    playbackResponse: object({ playback }),
     normalizedWindow: window, device, discovery, artifact, job,
     error: object({ error, discovery }, ['error']),
     session: object({ authenticated: { type: 'boolean' }, phase: string, captcha: nullableString, busy: { type: 'boolean' }, loginUrl: { const: '/api/v1/session/login' }, verificationUrl: { const: '/api/v1/session/verify' }, logoutUrl: { const: '/api/v1/session/logout' } }),
     devices: object({ devices: array(device), discovery }), deviceResponse: object({ device, discovery }),
-    capabilityResponse: object({ serial: string, capability: string, ...deviceSchemas.capability.properties, discovery }),
+    capabilityResponse: object({ serial: string, capability: string, ...deviceSchemas.capability.properties,
+      verificationScope: deviceSchemas.scope, discovery }, ['serial', 'capability', 'status', 'reason', 'evidence', 'verificationScope', 'discovery']),
     ranges: object({ serial: string, window, ranges: array(object({ start: string, end: string })), coverage: { type: 'null' },
       availability: { enum: ['available', 'none'] }, code: { enum: ['NO_RECORDING', null] } }),
     submission: object({ job, reused: { type: 'boolean' } }), jobResponse: object({ job }),
@@ -73,7 +90,7 @@ const contract = {
 };
 const ajv = new Ajv({ strict: false });
 ajv.addSchema(contract);
-const validators = Object.fromEntries(['identity', 'retry', 'window', 'export', 'login', 'verification', 'empty'].map(name =>
+const validators = Object.fromEntries(['identity', 'retry', 'window', 'export', 'playbackStart', 'login', 'verification', 'empty'].map(name =>
   [name, ajv.getSchema(`${contract.$id}#/definitions/${name}`)]));
 function validateRequest(name, data) {
   const validate = validators[name];

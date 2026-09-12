@@ -21,6 +21,7 @@ verified. The module itself performs no hardware operations.
 | --- | --- | --- |
 | Continuous recording query | Verified historical command 6000 response for the retained 20-minute interval, through the HomeBase on camera channel 1 | Firmware unknown; observed retention for one interval only |
 | Continuous recording export | Verified historical partial direct capture plus timestamp-preserving conversion and full decode | Partial media; no uninterrupted or lossless guarantee |
+| Continuous playback controls | This historical file contains only the Android command 6001 lead; it has no controls authorization record | Later Issue #9 observations must be recorded separately at their actual scope; they cannot be attached to these aliases |
 | Event recordings, live video, talkback, RTSP | No device-and-firmware verification recorded here | A protocol declaration is only a hint; lack of a declaration is unknown, not proof of unsupported hardware |
 
 `verified` means the specific operation described by its evidence was observed.
@@ -93,6 +94,16 @@ capability at one exact scope; unrelated capabilities and other firmware scopes
 remain intact. The pure matrix functions do not write files; the separately
 configured `DeviceVerificationRepository` provides local persistence for the API
 and authorized future recording/live evidence writers.
+
+For `continuousPlaybackControls`, an optional strict `controls` record adds
+`pauseResumeAtSpeed1: boolean` and `verifiedStartSpeeds: number[]`. It is valid
+only with `status: verified`; values must be unique members of `[1,2,4,16]`, and
+pause/resume requires 1 in the list. This is a ceiling on values accepted by this
+implementation, not a default support list. Runtime authorization additionally
+requires all four camera/HomeBase firmware strings and exact scope equality.
+Missing details produce an empty executable list even if older evidence says
+`verified`. No historical record is modified or automatically promoted. See
+[the resident session contract and pending delivery check](../recordings/PLAYBACK_SESSIONS.md).
 
 When `parent_sn` names an external parent absent from inventory, public
 `homeBaseId` stays null while `verificationScope.homeBase` retains that parent's

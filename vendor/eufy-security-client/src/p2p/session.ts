@@ -801,7 +801,8 @@ export class P2PClientProtocol extends TypedEmitter<P2PClientProtocolEvents> {
   }
 
   /** Verified with T8600 on T8030. Uses the VIDEO transport, including its packet reassembly. */
-  public startContinuousPlayback(deviceSN: string, channel: number, accountId: string, begin: number): void {
+  public startContinuousPlayback(deviceSN: string, channel: number, accountId: string, begin: number,
+    options?: { speed?: number; filePath?: string; customData?: CustomData }): void {
     if (!this.connected) throw new Error("Station is not connected");
     if (!Number.isSafeInteger(begin) || begin < 0) throw new RangeError("Invalid playback time");
     if (!accountId) throw new Error("Playback requires an account ID");
@@ -813,14 +814,14 @@ export class P2PClientProtocol extends TypedEmitter<P2PClientProtocolEvents> {
     this.sendCommandWithStringPayload({
       commandType: CommandType.CMD_DOORBELL_SET_PAYLOAD, channel,
       value: JSON.stringify({ commandType: 6001, data: {
-        session_id: 125, cmd: 0, begin_time: begin, play_speed: 1, play_type: 0,
-        device_sn: deviceSN, account_id: accountId, index: 0,
+        session_id: 125, cmd: 0, begin_time: begin, play_speed: options?.speed ?? 1, play_type: 0,
+        device_sn: deviceSN, account_id: accountId, index: 0, file_path: options?.filePath,
       } }),
-    });
+    }, options?.customData);
   }
 
-  public stopContinuousPlayback(): void {
-    if (this.continuousPlayback) this.endStream(P2PDataType.VIDEO, true);
+  public stopContinuousPlayback(customData?: CustomData): void {
+    if (this.continuousPlayback) this.endStream(P2PDataType.VIDEO, true, customData);
   }
 
   public sendCommandWithString(p2pcommand: P2PCommand, customData?: CustomData): void {
@@ -4434,7 +4435,7 @@ export class P2PClientProtocol extends TypedEmitter<P2PClientProtocolEvents> {
     }
   }
 
-  private endStream(datatype: P2PDataType, sendStopCommand = false): void {
+  private endStream(datatype: P2PDataType, sendStopCommand = false, customData?: CustomData): void {
     if (this.currentMessageState[datatype].p2pStreaming) {
       if (datatype === P2PDataType.VIDEO && this.continuousPlayback) {
         const playback = this.continuousPlayback;
@@ -4445,7 +4446,7 @@ export class P2PClientProtocol extends TypedEmitter<P2PClientProtocolEvents> {
             session_id: 123, cmd: 3, play_type: 0, play_speed: 1, begin_time: 0,
             file_path: "", index: 0, device_sn: playback.deviceSN,
           } }),
-        });
+        }, customData);
         sendStopCommand = false;
       }
       if (sendStopCommand) {

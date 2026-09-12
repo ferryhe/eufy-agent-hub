@@ -49,6 +49,19 @@ test('dated reachability writes preserve capability records and replace only the
   assert.equal(saved.reachability.find(item => item.serial === 'test-camera').status, 'online');
 });
 
+test('typed playback authorization survives durable reload and invalid controls cannot replace it', t => {
+  const f = fixture(t), observation = { ...record('continuousPlaybackControls'),
+    controls: { pauseResumeAtSpeed1: true, verifiedStartSpeeds: [1, 2, 4, 16] } };
+  f.repository.record(observation);
+  assert.deepEqual(new DeviceVerificationRepository(f.file).read().records[0], observation);
+  for (const controls of [ { pauseResumeAtSpeed1: true, verifiedStartSpeeds: [8] },
+    { pauseResumeAtSpeed1: true, verifiedStartSpeeds: [2] },
+    { pauseResumeAtSpeed1: true, verifiedStartSpeeds: [1], extra: true } ]) {
+    assert.throws(() => f.repository.record({ ...observation, controls }));
+    assert.deepEqual(f.repository.read().records[0], observation);
+  }
+});
+
 test('invalid writes fail explicitly and preserve the previous durable evidence', t => {
   const f = fixture(t); f.repository.record(record());
   const original = fs.readFileSync(f.file, 'utf8');

@@ -45,7 +45,34 @@ Stop:
 
 The continuous playback start payload omits `file_path`. Event playback supplies a recording path and uses `play_type:1`. Event file downloads are not a substitute for a continuous timeline.
 This device returns historical media on channel 101, still using the VIDEO transport. Reception must be enabled on the connection before sending the start command; otherwise the library discards media packets.
-The app code also contains cmd 1 for pause and cmd 2 for resume. These controls have not been validated independently from a computer and are not exposed as available capabilities.
+The app code also contains cmd 1 for pause and cmd 2 for resume. Later Issue #9
+computer observations and the scoped resident API are described below.
+
+## Playback controls verification gate (Issue #9)
+
+The device capability matrix catalogs `continuousPlaybackControls` as a
+`protocol_hint` only on the constrained T8600/T8030 recording path. The reason
+`android_6001_controls_require_device_firmware_verification` identifies this
+unverified lead; unqualified devices remain `unknown`. The resident v1
+[playback-session API](PLAYBACK_SESSIONS.md) requires a separate persisted,
+exact-scope `verified` record with typed controls before any start can execute.
+Without it the public executable list is empty. CLI, UI and Agent tools do not
+add playback control commands.
+
+Issue #9 internal authorized observations completed ordinary pause/resume and
+start/stop with values 1, 2, 4 and 16 on the tested scope. Value 8 returned start
+success and media but lacked confirmed completion; it remains unconfirmed, not
+unsupported. These values describe protocol selection with command/media evidence,
+not measured UI presentation ratios. Target command/media channel binding was
+observed; Node projects media channel and peer read-only range responses are not
+independent playback-isolation proof. No record is automatically promoted.
+
+The production wrapper still needs its formal API delivery check: speed 1
+start, valid media, pause for more than the adapter's original five-second idle,
+resume with new media advancement, confirmed stop and awaited close. Its local
+pause lease is 30 seconds. Inactive/disconnected/rejected/timeout handling has
+offline coverage; actual error semantics not observed on hardware stay unverified.
+The retained partial-capture evidence below cannot verify these controls.
 
 ## Local usage
 

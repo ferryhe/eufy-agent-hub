@@ -77,7 +77,7 @@ function createServer(options = {}) {
       return reject(400, '输入格式有误。', 'ui.error.inputFormat');
     }
     busy = true;
-    send(202, { ok: true });
+    if (route !== '/logout') send(202, { ok: true });
     try {
       if (route === '/login') {
         recordingRoutes.recordings.close();
@@ -85,15 +85,19 @@ function createServer(options = {}) {
         await session.login(data);
       }
       else if (route === '/logout') {
+        await v1.loggedOut();
         session.logout();
-        v1.loggedOut();
         recordingRoutes.recordings.close();
         recordingRoutes.state.records = []; recordingRoutes.state.query = null;
+        send(202, { ok: true });
       }
       else if (route === '/refresh') await session.refresh();
       else await session.verify(data.code.trim());
     } catch (error) {
-      session.fail(error);
+      if (route === '/logout') send(error.status || 503, versioned
+        ? { error: { code: error.code || 'CONTROL_CLEANUP_FAILED', message: error.code || 'CONTROL_CLEANUP_FAILED' } }
+        : errorBody(serviceError('Playback cleanup failed.', 'ui.error.busy')));
+      else session.fail(error);
     } finally {
       busy = false;
     }
@@ -106,6 +110,7 @@ function createServer(options = {}) {
     exports: options.exports, createRanges: options.createRanges,
     capabilityRecordsPath: options.capabilityRecordsPath ?? process.env.EUFY_CAPABILITY_RECORDS_PATH,
     deviceRepository: options.deviceRepository,
+    playback: options.playback,
   });
   const isBusy = () => busy || recordingRoutes.state.busy || v1.isBusy();
   const agentRoutes = installAgentRoutes(server, { getOrigin, ...options.agent });
