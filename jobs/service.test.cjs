@@ -87,6 +87,71 @@ test('stable identity, independent snapshots, persistent reopen, and no duplicat
   assert.ok(DEFAULT_OUTPUT_ROOT.endsWith(path.join('output', 'jobs')));
 });
 
+test('durable pages are deterministic, bounded, filtered and survive reopen', async t => {
+  const gate = deferred();
+  const outputRoot = root(t);
+  const jobs = new JobService({ outputRoot, worker: async () => { await gate.promise; return complete(); } });
+  t.after(() => gate.resolve());
+  const submitted = [
+    jobs.submit(request('one', 'home-a')),
+    jobs.submit({ ...request('two', 'home-b'), input: { serial: 'camera-b' } }),
+    jobs.submit({ ...request('three', 'home-c'), input: { serial: 'camera-a' } }),
+  ];
+  const first = jobs.listPage({ pageSize: 2 });
+  assert.deepEqual(first.jobs.map(job => job.jobId), [submitted[2].jobId, submitted[1].jobId]);
+  assert.equal(typeof first.nextCursor, 'string');
+  const second = jobs.listPage({ pageSize: 2, cursor: first.nextCursor });
+  assert.deepEqual(second.jobs.map(job => job.jobId), [submitted[0].jobId]);
+  assert.equal(second.nextCursor, null);
+  assert.deepEqual(jobs.listPage({ serial: 'camera-a' }).jobs.map(job => job.jobId), [submitted[2].jobId]);
+  await new Promise(resolve => setImmediate(resolve));
+  const running = jobs.listPage({ state: 'running' });
+  assert.deepEqual(running.jobs.map(job => job.jobId).sort(), submitted.map(job => job.jobId).sort());
+  assert.throws(() => jobs.listPage({ pageSize: 0 }), /pageSize/);
+  assert.throws(() => jobs.listPage({ pageSize: 101 }), /pageSize/);
+  assert.throws(() => jobs.listPage({ cursor: 'not-a-cursor' }), /cursor/);
+  assert.throws(() => jobs.listPage({ cursor: first.nextCursor, state: 'failed' }), /cursor/);
+
+  gate.resolve(); await jobs.whenIdle();
+  const reopened = new JobService({ outputRoot, worker: async () => assert.fail('terminal jobs must not replay') });
+  assert.deepEqual(reopened.listPage({ pageSize: 2 }), jobs.listPage({ pageSize: 2 }));
+  await reopened.whenIdle();
+});
+
+test('page cursor freezes the upper sequence while later submissions cannot duplicate or skip the traversal', async t => {
+  const jobs = service(t, complete);
+  const retained = Array.from({ length: 26 }, (_, index) => jobs.submit(request(`retained-${index}`, `home-${index}`)));
+  const first = jobs.listPage();
+  assert.equal(first.jobs.length, 25, 'default page size is 25');
+  const later = jobs.submit(request('later', 'home-later'));
+  const seen = [...first.jobs];
+  let cursor = first.nextCursor;
+  while (cursor) {
+    const page = jobs.listPage({ cursor });
+    seen.push(...page.jobs); cursor = page.nextCursor;
+  }
+  assert.deepEqual(seen.map(job => job.jobId), [...retained].reverse().map(job => job.jobId));
+  assert.equal(new Set(seen.map(job => job.jobId)).size, retained.length);
+  assert.equal(seen.some(job => job.jobId === later.jobId), false);
+  await jobs.whenIdle();
+});
+
+test('state filters use current state when every page is read', async t => {
+  const gate = deferred();
+  const jobs = service(t, async () => { await gate.promise; return complete(); });
+  t.after(() => gate.resolve());
+  jobs.submit(request('running'));
+  const older = jobs.submit(request('older-queued'));
+  const newer = jobs.submit(request('newer-queued'));
+  await new Promise(resolve => setImmediate(resolve));
+  const first = jobs.listPage({ pageSize: 1, state: 'queued' });
+  assert.deepEqual(first.jobs.map(job => job.jobId), [newer.jobId]);
+  jobs.cancelQueued(older.jobId);
+  const second = jobs.listPage({ pageSize: 1, state: 'queued', cursor: first.nextCursor });
+  assert.deepEqual(second, { jobs: [], nextCursor: null });
+  gate.resolve(); await jobs.whenIdle();
+});
+
 test('same HomeBase is FIFO through failure; another HomeBase can progress independently', async t => {
   const gate = deferred();
   const started = [];

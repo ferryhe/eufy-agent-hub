@@ -75,6 +75,8 @@ const contract = {
     accepted: object({ ok: { const: true } }),
     identity: { type: 'object', required: ['requestId'], properties: { requestId: nonempty } },
     retry: object({ requestId: nonempty }),
+    jobListQuery: object({ pageSize: { type: 'string', pattern: '^(?:[1-9]|[1-9][0-9]|100)$' }, cursor: nonempty,
+      state: { enum: ['queued', 'running', 'succeeded', 'failed', 'cancelled'] }, serial: nonempty }, []),
     window: object(time, ['day', 'start', 'end']),
     export: object({ requestId: nonempty, serial: nonempty, ...time }, ['requestId', 'serial', 'day', 'start', 'end']),
     playbackStart: object({ serial: nonempty, ...time, speed: { type: 'number' } }, ['serial', 'day', 'start', 'end']),
@@ -103,12 +105,13 @@ const contract = {
     ranges: object({ serial: string, window, ranges: array(object({ start: string, end: string })), coverage: { type: 'null' },
       availability: { enum: ['available', 'none'] }, code: { enum: ['NO_RECORDING', null] } }),
     submission: object({ job, reused: { type: 'boolean' } }), jobResponse: object({ job }),
+    jobList: object({ jobs: array(job), nextCursor: nullableString }),
     artifacts: object({ jobId: string, artifacts: array(artifact) }),
   },
 };
 const ajv = new Ajv({ strict: false });
 ajv.addSchema(contract);
-const validators = Object.fromEntries(['identity', 'retry', 'window', 'export', 'playbackStart', 'liveStart', 'login', 'verification', 'empty'].map(name =>
+const validators = Object.fromEntries(['identity', 'retry', 'jobListQuery', 'window', 'export', 'playbackStart', 'liveStart', 'login', 'verification', 'empty'].map(name =>
   [name, ajv.getSchema(`${contract.$id}#/definitions/${name}`)]));
 function validateRequest(name, data) {
   const validate = validators[name];

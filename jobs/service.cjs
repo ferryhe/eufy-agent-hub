@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 
 const DEFAULT_OUTPUT_ROOT = path.resolve(__dirname, '../output/jobs');
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled']);
@@ -8,6 +8,9 @@ const TRANSITIONS = {
   queued: new Set(['running', 'cancelled']),
   running: new Set(['succeeded', 'failed', 'cancelled']),
 };
+const JOB_STATES = new Set(['queued', 'running', 'succeeded', 'failed', 'cancelled']);
+const DEFAULT_PAGE_SIZE = 25;
+const MAX_PAGE_SIZE = 100;
 const copy = value => JSON.parse(JSON.stringify(value));
 function requireString(value, name) {
   if (typeof value !== 'string' || !value.trim()) throw new TypeError(`${name} must be a nonempty string`);
@@ -58,6 +61,37 @@ class JobService {
 
   list() {
     return [...this.#jobs.values()].sort((a, b) => a.sequence - b.sequence).map(copy);
+  }
+
+  listPage({ pageSize = DEFAULT_PAGE_SIZE, cursor = null, state = null, serial = null } = {}) {
+    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > MAX_PAGE_SIZE)
+      throw new TypeError(`pageSize must be an integer between 1 and ${MAX_PAGE_SIZE}`);
+    if (state !== null && !JOB_STATES.has(state)) throw new TypeError('state filter is invalid');
+    if (serial !== null) requireString(serial, 'serial filter');
+    const store = createHash('sha256').update(this.outputRoot).digest('base64url').slice(0, 16);
+    let upperSequence = Math.max(0, ...[...this.#jobs.values()].map(job => job.sequence));
+    let after = null;
+    if (cursor !== null) {
+      try {
+        const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+        if (!value || value.v !== 1 || value.store !== store || value.state !== state || value.serial !== serial
+          || !Number.isInteger(value.upperSequence) || value.upperSequence < 0
+          || !Number.isInteger(value.after?.sequence) || value.after.sequence < 0
+          || typeof value.after?.jobId !== 'string' || !value.after.jobId) throw new Error();
+        upperSequence = value.upperSequence;
+        after = value.after;
+      } catch { throw new TypeError('cursor is invalid or belongs to another store or filter'); }
+    }
+    const ordered = [...this.#jobs.values()]
+      .filter(job => job.sequence <= upperSequence
+        && (!after || job.sequence < after.sequence || (job.sequence === after.sequence && job.jobId.localeCompare(after.jobId) < 0)))
+      .sort((a, b) => b.sequence - a.sequence || b.jobId.localeCompare(a.jobId))
+      .filter(job => (!state || job.state === state) && (!serial || job.input?.serial === serial));
+    const jobs = ordered.slice(0, pageSize);
+    const last = jobs.at(-1);
+    const nextCursor = ordered.length > pageSize ? Buffer.from(JSON.stringify({ v: 1, store, state, serial, upperSequence,
+      after: { sequence: last.sequence, jobId: last.jobId } })).toString('base64url') : null;
+    return { jobs: jobs.map(copy), nextCursor };
   }
 
   submit({ requestId, homeBaseId, input = {} }) {
