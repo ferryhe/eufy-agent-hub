@@ -39,6 +39,7 @@ test('Chromium M1 shell uses the resident fixture without persistence or route i
   assert.equal(await page.evaluate(()=>document.activeElement?.textContent),'Close');
   await page.keyboard.press('Escape');
   assert.equal(await logoutDialog.count(),0);
+  await page.waitForFunction(()=>document.activeElement?.textContent==='Sign out');
   assert.equal(await page.evaluate(()=>document.activeElement?.textContent),'Sign out');
   await page.getByRole('button',{name:'Sign out'}).click();
   await page.getByRole('alertdialog').getByRole('button',{name:'Sign out'}).click();
@@ -77,6 +78,7 @@ test('Chromium M1 shell uses the resident fixture without persistence or route i
   assert.equal(await page.evaluate(()=>document.activeElement?.textContent),'Close');
   await page.keyboard.press('Escape');
   assert.equal(await dialog.count(),0);
+  await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Open navigation');
   assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),'Open navigation');
   await page.setViewportSize({width:1440,height:900});
   await page.goto(origin+'/app/settings');
