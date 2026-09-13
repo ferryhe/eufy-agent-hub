@@ -79,9 +79,7 @@ test('Chromium M1 shell uses the resident fixture without persistence or route i
   await page.locator('.sheet-sidebar').waitFor();
   assert.equal(await page.evaluate(()=>document.querySelector('.sheet-sidebar')?.contains(document.activeElement)),true);
   await page.getByRole('button',{name:'Assistant'}).click();const dialog=page.getByRole('dialog',{name:'Assistant'});
-  await dialog.waitFor();const headerBottom=await page.locator('header').evaluate(e=>e.getBoundingClientRect().bottom), drawerTop=await dialog.locator(':scope > div').first().evaluate(e=>e.getBoundingClientRect().top);
-  assert.ok(drawerTop>=headerBottom);
-  assert.equal(await page.evaluate(()=>document.activeElement?.textContent),'Close');
+  await dialog.waitFor();const assistantClose=dialog.getByRole('button',{name:'Close'});assert.equal(await assistantClose.isVisible(),true);assert.equal(await assistantClose.isEnabled(),true);const closeBox=await assistantClose.boundingBox();assert.ok(closeBox&&closeBox.x>=0&&closeBox.y>=0&&closeBox.x+closeBox.width<=390&&closeBox.y+closeBox.height<=844);assert.equal(await page.getByRole('button',{name:'Open navigation'}).count(),0);assert.equal(await page.evaluate(()=>document.activeElement?.textContent),'Close');
   await page.keyboard.press('Tab');
   await page.keyboard.press('Shift+Tab');
   assert.equal(await page.evaluate(()=>document.activeElement?.textContent),'Close');
