@@ -19,6 +19,7 @@
     "browser:test": "node --test interface/react/browser.cjs"
   },
   "dependencies": {
+    "@assistant-ui/react": "0.15.19",
     "@openai/agents": "0.18.0",
     "@radix-ui/react-alert-dialog": "1.1.15",
     "@radix-ui/react-dialog": "1.1.15",

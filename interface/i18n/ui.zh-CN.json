@@ -53,6 +53,8 @@
   "ui.send": "发送",
   "ui.agentRunning": "助手正在处理。可切换视图或刷新，本地工作会继续。",
   "ui.agentReady": "可以发送录像请求。",
+  "ui.agentLoading": "正在读取常驻服务对话…",
+  "ui.workspaceRetry": "重试连接",
   "ui.you": "你",
   "ui.eligible": "可执行录像导出",
   "ui.ineligible": "不支持录像导出",
