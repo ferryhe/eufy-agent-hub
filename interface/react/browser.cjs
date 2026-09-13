@@ -61,14 +61,14 @@ test('Chromium M1 shell uses the resident fixture without persistence or route i
   await menu.focus();
   await page.keyboard.press('Enter');
   await page.locator('.sheet-sidebar').waitFor();
-  assert.equal(await page.evaluate(()=>document.querySelector('.sheet-sidebar nav')?.contains(document.activeElement)),true);
+  assert.equal(await page.evaluate(()=>document.querySelector('.sheet-sidebar')?.contains(document.activeElement)),true);
   await page.keyboard.press('Escape');
   await page.waitForFunction(()=>!document.querySelector('.sheet-sidebar'));
   assert.equal(await page.locator('.sheet-sidebar').count(),0);
   assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),'Open navigation');
   await page.keyboard.press('Enter');
   await page.locator('.sheet-sidebar').waitFor();
-  assert.equal(await page.evaluate(()=>document.querySelector('.sheet-sidebar nav')?.contains(document.activeElement)),true);
+  assert.equal(await page.evaluate(()=>document.querySelector('.sheet-sidebar')?.contains(document.activeElement)),true);
   await page.getByRole('button',{name:'Assistant'}).click();const dialog=page.getByRole('dialog',{name:'Assistant'});
   await dialog.waitFor();const headerBottom=await page.locator('header').evaluate(e=>e.getBoundingClientRect().bottom), drawerTop=await dialog.locator(':scope > div').first().evaluate(e=>e.getBoundingClientRect().top);
   assert.ok(drawerTop>=headerBottom);
