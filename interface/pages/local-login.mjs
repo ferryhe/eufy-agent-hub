@@ -73,12 +73,13 @@ function renderRecordings() {
   el('recording-message').textContent = recordingError ? errorText(recordingError) : state
     ? i18n.message(state.message, state.messageI18n) : '';
   if (!state) return;
-  const nextResultKey = JSON.stringify([state.records, state.busy, i18n.locale]);
+  const expectedQuery = state.query ? { serial: state.query.serial, ...state.query.window.input } : null;
+  const nextResultKey = JSON.stringify([expectedQuery, state.records, state.busy, i18n.locale]);
   if (nextResultKey !== resultKey) {
     resultKey = nextResultKey;
-    el('recording-results').replaceChildren(...(state.records.length ? [components.timeline({
+    el('recording-results').replaceChildren(...(state.records.length && expectedQuery ? [components.timeline({
       ranges: state.records.map(record => ({ ...record, start: i18n.date(record.start), end: i18n.date(record.end) })),
-      busy: state.busy, action: record => recordingAction('/recordings/download', { recordId: record.id }),
+      busy: state.busy, action: record => recordingAction('/recordings/download', { recordId: record.id, expectedQuery }),
     })] : []));
   }
   const nextSavedKey = JSON.stringify(state.saved);

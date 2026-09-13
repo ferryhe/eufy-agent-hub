@@ -17,6 +17,14 @@ function parseWindow(data, options) {
     end: Date.parse(window.normalized.end), timezone: window.normalized.timezone, window, coverage: null };
 }
 
+function matchesExpectedQuery(expected, query) {
+  if (!expected || !query || typeof expected.serial !== 'string' || typeof expected.day !== 'string'
+    || typeof expected.start !== 'string' || typeof expected.end !== 'string'
+    || (typeof expected.timezone !== 'string' && expected.timezone !== null)) return false;
+  const actual = { serial: query.serial, ...query.window.input };
+  return ['serial','day','start','end','timezone'].every(field => expected[field] === actual[field]);
+}
+
 function serveMedia(req, res, file) {
   const size = fs.statSync(file).size;
   let start = 0, end = size - 1, code = 200;
@@ -100,6 +108,8 @@ function installRecordingRoutes(server, session, options = {}) {
         data = JSON.parse(body);
         if (route.endsWith('/query')) query = parseWindow(data, { defaultTimezone: timezone });
         else {
+          if (Object.prototype.hasOwnProperty.call(data, 'expectedQuery') && !matchesExpectedQuery(data.expectedQuery, state.query))
+            return send(409, errorBody(serviceError('请先查询该设备的录像。', 'service.recordings.queryDeviceFirst')));
           selected = state.records.find(record => record.id === String(data.recordId));
           if (!selected) throw serviceError('请先查询并选择录像。', 'service.recordings.selectFirst');
         }

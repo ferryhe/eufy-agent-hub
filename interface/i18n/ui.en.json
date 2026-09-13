@@ -57,6 +57,8 @@
   "ui.eligible": "Recording export eligible",
   "ui.ineligible": "Recording export unavailable",
   "ui.evidence": "Verification evidence: {status}",
+  "ui.firmware": "Firmware: {main} / {secondary}",
+  "ui.inventoryStatus": "Inventory status: {status}",
   "ui.normalizedWindow": "Service window: {start} — {end} (UTC); timezone: {timezone}",
   "ui.requestedWindow": "Requested local time: {day} {start} — {end}",
   "ui.indexHint": "Index ranges show available footage, not proof of complete coverage.",
