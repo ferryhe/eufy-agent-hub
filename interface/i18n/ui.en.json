@@ -23,7 +23,7 @@
   "ui.query": "Find event recordings",
   "ui.saved": "Exported recordings",
   "ui.saved.hint": "These files are saved on this computer. Times come from the event index; clips may include pre-recorded footage. Event clips do not guarantee coverage of the entire requested interval.",
-  "ui.privacy": "This page is provided by your local project, not eufy. Passwords and login sessions are held in service memory and cleared when it stops.",
+  "ui.privacy": "This page is provided by your local project, not eufy. Passwords and pending challenges are transient. A valid resident session token may be saved locally for restart restoration; signing out clears it.",
   "ui.disconnected": "The local service disconnected. Please restart the project.",
   "ui.unreachable": "Cannot connect to the local service. Check that the project is running.",
   "ui.recordings.unreachable": "Cannot connect to the recording service.",

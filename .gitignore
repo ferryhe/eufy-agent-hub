@@ -10,3 +10,5 @@ __pycache__/
 .venv/
 *.log
 .DS_Store
+
+interface/app-dist/
