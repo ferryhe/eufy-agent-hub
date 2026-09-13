@@ -57,13 +57,13 @@ test('Chromium M1 shell uses the resident fixture without persistence or route i
   assert.equal(await page.locator('.sheet-sidebar').count(),0);
   await page.getByRole('button',{name:'Open navigation'}).focus();
   await page.keyboard.press('Tab');
-  assert.equal(await page.evaluate(()=>document.querySelector('.sidebar')?.contains(document.activeElement)),false);const menu=page.getByRole('button',{name:'Open navigation'});
+  assert.equal(await page.evaluate(()=>Boolean(document.querySelector('.sidebar')?.contains(document.activeElement))),false);const menu=page.getByRole('button',{name:'Open navigation'});
   await menu.focus();
   await page.keyboard.press('Enter');
   await page.locator('.sheet-sidebar').waitFor();
   assert.equal(await page.evaluate(()=>document.querySelector('.sheet-sidebar nav')?.contains(document.activeElement)),true);
   await page.keyboard.press('Escape');
-  await page.waitForFunction(()=>!document.querySelector('.sidebar')?.classList.contains('open'));
+  await page.waitForFunction(()=>!document.querySelector('.sheet-sidebar'));
   assert.equal(await page.locator('.sheet-sidebar').count(),0);
   assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),'Open navigation');
   await page.keyboard.press('Enter');
