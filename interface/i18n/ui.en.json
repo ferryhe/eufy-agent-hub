@@ -53,6 +53,8 @@
   "ui.send": "Send",
   "ui.agentRunning": "Assistant is working. You can switch views or refresh; resident work continues.",
   "ui.agentReady": "Ready for a recording request.",
+  "ui.agentLoading": "Loading the resident conversation…",
+  "ui.workspaceRetry": "Retry connection",
   "ui.you": "You",
   "ui.eligible": "Recording export eligible",
   "ui.ineligible": "Recording export unavailable",

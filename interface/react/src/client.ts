@@ -10,6 +10,8 @@ export type Artifact = { id: string; name: string; url: string; playable: boolea
 export type Job = { jobId: string; requestId: string; serial: string; window: NormalizedWindow; state: string; stage: string; progress: number; result: any; artifacts: Artifact[]; error: {code:string;message:string}|null; retryOfJobId:string|null; attempt:number; cancellationRequestedAt:string|null; createdAt:string; updatedAt:string }
 export type JobPage = { jobs:Job[]; nextCursor:string|null }
 export type LegacyRecordings = { busy: boolean; timezone: string; message: string; messageI18n?: Message; query: ({serial:string;window:NormalizedWindow}|null); records: Array<{id:string;start:string;end:string}>; saved: Array<{id:string;device:string;serial?:string;start:string;end:string;bytes:number;url:string}> }
+export type AgentTurn = { id:string; text:string; locale:'en'|'zh-CN'; state:'running'|'completed'|'failed'|'interrupted'; response:string; error?:{code:string;message:string}; notices?:Array<any> }
+export type AgentState = { turns:AgentTurn[]; receipts:Array<any>; jobs:Array<any>; presentation?:any; notices:Array<any>; busy:boolean }
 type Contract = { $id: string; definitions: Record<string, unknown> }
 let contract: Contract | undefined
 export async function getContract(): Promise<Contract> { return contract ??= await json('/api/v1/contract') }
@@ -44,5 +46,7 @@ export const api = {
   recordings: () => json<LegacyRecordings>('/recordings/status'),
   eventQuery: (input:WindowInput) => post<any>('/recordings/query', input),
   eventDownload: (recordId:string,expectedQuery:ExpectedQuery) => post<any>('/recordings/download', {recordId,expectedQuery}),
+  agentState: (jobIds:string[]=[]) => json<AgentState>('/interface/agent/state'+(jobIds.length?'?'+new URLSearchParams(jobIds.map(id=>['jobId',id])):'')),
+  agentTurn: (turn:{id:string;text:string;locale:'en'|'zh-CN'}) => post<{id:string;reused:boolean}>('/interface/agent/turn',turn),
 }
 function withoutSerial({serial:_serial,...window}:WindowInput){ return window }

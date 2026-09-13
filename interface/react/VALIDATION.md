@@ -1,4 +1,4 @@
-# React recordings workbench validation
+# React interface validation
 
 Issue #36 adds the opt-in `/app/recordings` workbench. The default `/` interface is unchanged.
 
@@ -11,6 +11,14 @@ The browser checks assert exact camera serial and unchanged local date/time/time
 The partial player DOM node is marked in the browser, assigned `currentTime = 17`, translated to Chinese, and checked again by object identity and time. This proves React polling/language updates do not remount that registered player. The complete label requires the API's `state:succeeded`, `result.outcome:complete`, `coverageVerified:true` and `validation.passed:true`; a playable partial remains visibly partial.
 
 The fixture media bytes and synthetic completeness metadata are test data. They are not hardware acceptance, and the browser evidence does not claim gap-free footage or verified device firmware.
+
+## Issue #38 assistant-ui integration
+
+The React Assistant drawer uses the installed `@assistant-ui/react` external-store runtime against the real resident HTTP adapter and installed SDK `ScriptedModel`. Focused Chromium flows cover a restored draft and independent response language, one accepted natural-language export, the same resident job in workspace and task center, registered player identity/`currentTime` through polling, pin/reorder, locale and drawer changes, an ambiguous duplicate-name clarification without a second capture, and conversation/pin restoration after refresh. Browser-observed polling and refresh issue only `GET /interface/agent/state`; they never post a turn or export.
+
+A second flow drops the accepted turn response, double-clicks send, probes `TURN_BUSY`, and then fails the model after export acceptance. One turn and one accepted job remain visible after refresh, with no duplicate model call. A third flow makes Agent state loading, empty, disconnected and recovered states visible while leaving the normal recordings workbench mounted. Unsupported edit/regenerate/cancel controls are absent; task-center export retry remains separately covered by the existing lost-reply retry tests.
+
+The shared workspace continues to use version-1 reference descriptors and the existing renderer. Chrome state-preserving moves retain playback state; browsers without state-preserving node moves can pause media during reorder even though the same video element is retained. These offline flows are not real-model or hardware evidence.
 
 ## L2 hardware
 
