@@ -110,4 +110,34 @@ test('Chromium shows restored and expired resident sessions without a login repl
   await page.getByRole('status').getByText(/session has expired/i).waitFor()}}finally{if(b)await b.close();
   await new Promise(r=>srv.close(r));
   await srv.shutdown();fs.rmSync(root,{recursive:true,force:true})}}});
-test('Chromium preserves explicit language, tolerates denied storage, and localizes later reachability failure',async t=>{const root=fs.mkdtempSync(path.join(os.tmpdir(),'eufy-pw-pref-'));const session={authenticated:false,state:{phase:'login_required',devices:[],diagnostics:[],message:'登录'},close(){}};const srv=createServer({port:0,session,recordings:{close(){}},outputRoot:root});await new Promise(r=>srv.start(r));const origin=`http://127.0.0.1:${srv.address().port}`;let browser;t.after(async()=>{if(browser)await browser.close();await new Promise(r=>srv.close(r));await srv.shutdown();fs.rmSync(root,{recursive:true,force:true})});browser=await chromium.launch({headless:true});const en=await browser.newContext({locale:'zh-CN'});await en.addInitScript(()=>localStorage.setItem('eufy-agent-hub.language','en'));const page=await en.newPage();await page.goto(origin+'/app/recordings');await page.getByRole('heading',{name:'Sign in'}).waitFor();assert.equal(await page.getByLabel('Language').inputValue(),'en');await page.reload();assert.equal(await page.getByLabel('Language').inputValue(),'en');await page.getByLabel('Language').selectOption('zh-CN');await page.route('**/status',route=>route.abort());await page.waitForFunction(()=>document.body.textContent?.includes('无法连接本地服务。'));await en.close();const denied=await browser.newContext({locale:'zh-CN'});await denied.addInitScript(()=>Object.defineProperty(window,'localStorage',{get(){throw new Error('denied')}}));const deniedPage=await denied.newPage();await deniedPage.goto(origin+'/app/recordings');await deniedPage.getByRole('heading',{name:'登录'}).waitFor();assert.equal(await deniedPage.getByLabel('语言').inputValue(),'zh-CN');assert.equal(await deniedPage.evaluate(()=>document.documentElement.classList.contains('dark')),false);await denied.close();});
+test('Chromium preserves explicit language, tolerates denied storage, and localizes later reachability failure',async t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'eufy-pw-pref-'));
+  const session={authenticated:false,state:{phase:'login_required',devices:[],diagnostics:[],message:'登录'},close(){}};
+  const srv=createServer({port:0,session,recordings:{close(){}},outputRoot:root});
+  await new Promise(r=>srv.start(r));const origin=`http://127.0.0.1:${srv.address().port}`;let browser;
+  t.after(async()=>{if(browser)await browser.close();await new Promise(r=>srv.close(r));await srv.shutdown();fs.rmSync(root,{recursive:true,force:true})});
+  browser=await chromium.launch({headless:true});
+  const en=await browser.newContext({locale:'zh-CN'});await en.addInitScript(()=>localStorage.setItem('eufy-agent-hub.language','en'));
+  const page=await en.newPage();await page.goto(origin+'/app/recordings');await page.getByRole('heading',{name:'Sign in'}).waitFor();
+  assert.equal(await page.getByLabel('Language').inputValue(),'en');assert.equal(await page.evaluate(()=>document.documentElement.lang),'en');
+  await page.evaluate(()=>dispatchEvent(new Event('languagechange')));assert.equal(await page.getByLabel('Language').inputValue(),'en');
+  await page.reload();assert.equal(await page.getByLabel('Language').inputValue(),'en');
+  await page.getByLabel('Language').selectOption('zh-CN');await page.route('**/status',route=>route.abort());
+  await page.waitForFunction(()=>document.body.textContent?.includes('无法连接本地服务。'));await en.close();
+  const denied=await browser.newContext({locale:'zh-CN'});await denied.addInitScript(()=>Object.defineProperty(window,'localStorage',{get(){throw new Error('denied')}}));
+  const deniedPage=await denied.newPage();await deniedPage.goto(origin+'/app/recordings');await deniedPage.getByRole('heading',{name:'登录'}).waitFor();
+  assert.equal(await deniedPage.getByLabel('语言').inputValue(),'auto');assert.equal(await deniedPage.evaluate(()=>document.documentElement.lang),'zh-CN');
+  assert.equal(await deniedPage.evaluate(()=>document.documentElement.classList.contains('dark')),false);await denied.close();
+});
+test('Chromium auto preference follows browser languagechange',async t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'eufy-pw-auto-'));
+  const srv=createServer({port:0,session:{authenticated:false,state:{phase:'login_required',devices:[]},close(){}},recordings:{close(){}},outputRoot:root});
+  await new Promise(r=>srv.start(r));const origin=`http://127.0.0.1:${srv.address().port}`;let browser;
+  t.after(async()=>{if(browser)await browser.close();await new Promise(r=>srv.close(r));await srv.shutdown();fs.rmSync(root,{recursive:true,force:true})});
+  browser=await chromium.launch({headless:true});const context=await browser.newContext();
+  await context.addInitScript(()=>{Object.defineProperty(window,'__locale',{value:'zh-CN',writable:true});Object.defineProperty(navigator,'languages',{get:()=>[window.__locale],configurable:true});Object.defineProperty(navigator,'language',{get:()=>window.__locale,configurable:true})});
+  const page=await context.newPage();await page.goto(origin+'/app/recordings');
+  await page.getByRole('heading',{name:'登录'}).waitFor();assert.equal(await page.getByLabel('语言').inputValue(),'auto');assert.equal(await page.evaluate(()=>document.documentElement.lang),'zh-CN');
+  await page.evaluate(()=>{window.__locale='en';dispatchEvent(new Event('languagechange'))});
+  await page.getByRole('heading',{name:'Sign in'}).waitFor();assert.equal(await page.getByLabel('Language').inputValue(),'auto');assert.equal(await page.evaluate(()=>document.documentElement.lang),'en');
+});
