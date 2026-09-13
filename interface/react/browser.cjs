@@ -210,6 +210,7 @@ test('Chromium recording workbench keeps one durable intent and separates event 
   assert.notEqual(submissions.at(-1).requestId,firstRequestId);
   const beforeReload=submissions.length;await page.reload();await page.locator('[data-status]').filter({hasText:'完整 — 覆盖与解码已校验'}).waitFor({timeout:15000});
   await page.waitForTimeout(1400);assert.equal(submissions.length,beforeReload,'known terminal jobs are observed, not retried');assert.equal(f.calls.capture,2);
+  assert.equal(await page.getByLabel('确切摄像头').evaluate(element=>element.getBoundingClientRect().right<=element.parentElement.getBoundingClientRect().right),true);
   assert.equal(await page.locator('body').evaluate(element=>element.scrollWidth<=element.clientWidth),true);
   await page.setViewportSize({width:1440,height:900});await page.getByRole('heading',{name:'录像工作台'}).waitFor();
   assert.equal(await page.locator('body').evaluate(element=>element.scrollWidth<=element.clientWidth),true);
