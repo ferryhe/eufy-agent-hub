@@ -359,6 +359,57 @@ test('device discovery preserves the capped read facts when the later verificati
   assert.equal((await f.json('/api/v1/devices', undefined, 'devices')).value.discovery.status, 'succeeded');
 });
 
+test('HTTP durable job pages are schema-backed, frozen, filtered and reject invalid or foreign cursors', async t => {
+  const f = await fixture(t);
+  const empty = await f.json('/api/v1/jobs', undefined, 'jobList');
+  assert.deepEqual(empty.value, { jobs: [], nextCursor: null });
+  await f.login();
+  const accepted = await Promise.all(Array.from({ length: 5 }, (_, index) =>
+    f.json('/api/v1/exports', { ...request, requestId: `list-${index}` }, 'submission')));
+  for (const response of accepted) assert.equal(response.status, 202);
+  const snapshots = accepted.map(response => JSON.parse(fs.readFileSync(path.join(f.directory, 'jobs', response.value.job.jobId, 'metadata.json'))));
+  const expected = snapshots.sort((a, b) => b.sequence - a.sequence || b.jobId.localeCompare(a.jobId)).map(job => job.jobId);
+  const first = await f.json('/api/v1/jobs?pageSize=2', undefined, 'jobList');
+  assert.deepEqual(first.value.jobs.map(job => job.jobId), expected.slice(0, 2));
+  assert.equal(typeof first.value.nextCursor, 'string');
+  assert.equal(first.value.nextCursor.includes(expected[0]), false, 'cursor is opaque');
+
+  const later = await f.json('/api/v1/exports', { ...request, requestId: 'list-later' }, 'submission');
+  const seen = [...first.value.jobs]; let cursor = first.value.nextCursor;
+  while (cursor) {
+    const page = await f.json(`/api/v1/jobs?pageSize=2&cursor=${encodeURIComponent(cursor)}`, undefined, 'jobList');
+    seen.push(...page.value.jobs); cursor = page.value.nextCursor;
+  }
+  assert.deepEqual(seen.map(job => job.jobId), expected);
+  assert.equal(seen.some(job => job.jobId === later.value.job.jobId), false);
+  assert.equal(new Set(seen.map(job => job.jobId)).size, expected.length);
+  assert.equal((await f.json('/api/v1/jobs?pageSize=100', undefined, 'jobList')).value.jobs.length, 6);
+  assert.equal((await f.json('/api/v1/jobs?serial=camera', undefined, 'jobList')).value.jobs.length, 6);
+  for (const route of ['/api/v1/jobs?pageSize=0', '/api/v1/jobs?pageSize=101', '/api/v1/jobs?pageSize=no',
+    '/api/v1/jobs?state=unknown', '/api/v1/jobs?serial=', '/api/v1/jobs?extra=x', '/api/v1/jobs?cursor=broken',
+    `/api/v1/jobs?state=queued&cursor=${encodeURIComponent(first.value.nextCursor)}`]) {
+    const invalid = await f.json(route); assert.equal(invalid.status, 400, route); assert.equal(invalid.value.error.code, 'INVALID_REQUEST', route);
+  }
+  const other = await fixture(t);
+  const foreign = await other.json(`/api/v1/jobs?cursor=${encodeURIComponent(first.value.nextCursor)}`);
+  assert.equal(foreign.status, 400); assert.equal(foreign.value.error.code, 'INVALID_REQUEST');
+});
+
+test('HTTP job listing reopens retained work and remains readable after logout', async t => {
+  let retainedId;
+  const f = await fixture(t, { beforeStart: async outputRoot => {
+    const jobs = new JobService({ outputRoot, worker: async () => ({ outcome: 'complete', coverageVerified: true, validation: { passed: true } }) });
+    retainedId = jobs.submit({ requestId: 'other-client', homeBaseId: 'base', input: { serial: request.serial, window: normalizeWindow(request) } }).jobId;
+    await jobs.whenIdle();
+  } });
+  const reopened = await f.json('/api/v1/jobs', undefined, 'jobList');
+  assert.deepEqual(reopened.value.jobs.map(job => job.jobId), [retainedId]);
+  assert.equal(reopened.value.jobs[0].requestId, 'other-client');
+  assert.equal((await f.json('/api/v1/session/logout', {})).status, 202);
+  const signedOut = await f.json('/api/v1/jobs?state=succeeded', undefined, 'jobList');
+  assert.deepEqual(signedOut.value.jobs.map(job => job.jobId), [retainedId]);
+});
+
 test('HTTP operator cancel is local, persists pending cleanup, preserves FIFO and exposes cancelled evidence', async t => {
   let entered, release;
   const ready = new Promise(resolve => { entered = resolve; }), cleanup = new Promise(resolve => { release = resolve; });

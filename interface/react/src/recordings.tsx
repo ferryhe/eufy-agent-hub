@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api, type Device, type Discovery, type ExpectedQuery, type Job, type LegacyRecordings, type WindowInput } from './client'
 import { createResults } from '../../components/results.mjs'
+import { JobResultCard } from './job-result'
 
 type Language = 'en'|'zh-CN'
 type Intent = { requestId:string; input:WindowInput; submitted:boolean; jobId?:string }
 type Store = { version:1; intent?:Intent; jobIds:string[] }
 const storageKey = 'eufy-agent-hub.recording-workbench'
-const terminal = (job:Job) => ['succeeded','failed','cancelled'].includes(job.state)
 const fingerprint = (input:WindowInput) => JSON.stringify(input)
 const today = () => new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Toronto',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())
 const emptyInput = ():WindowInput => ({serial:'',day:today(),start:'16:30',end:'16:50',timezone:'America/Toronto'})
@@ -73,20 +73,6 @@ function fault(error:any) {
 }
 const eventFingerprint=(serial:string,window:{day:string;start:string;end:string;timezone:string|null})=>JSON.stringify([serial,window.day,window.start,window.end,window.timezone])
 
-function view(job:Job) {
-  const result=job.result
-  const complete=job.state==='succeeded'&&result?.outcome==='complete'&&result.coverageVerified===true&&result.validation?.passed===true
-  const status=complete?'complete':result?.outcome==='partial'?'partial':terminal(job)?(job.state==='cancelled'?'cancelled':'failed'):job.state
-  return {job,status,complete,videos:(job.artifacts||[]).filter(item=>item.playable&&item.validated),coverage:result?.coverage??null,
-    validation:result?.validation??null,diagnostics:result?.diagnostics??[],error:job.error}
-}
-
-function JobCard({job,i18n}:{job:Job;i18n:any}) {
-  const root=useRef<HTMLDivElement>(null)
-  useEffect(()=>{const results=createResults({document,i18n}),card=root.current!.firstElementChild
-    if(card) results.updateJob(card,view(job)); else root.current!.append(results.job(view(job)))},[job,i18n])
-  return <div ref={root}/>
-}
 function Timeline({value,i18n,label}:{value:any;i18n:any;label:string}) {
   const root=useRef<HTMLDivElement>(null)
   useEffect(()=>{root.current!.replaceChildren(createResults({document,i18n}).timeline({window:value.window,ranges:value.ranges,label}))},[value,i18n,label])
@@ -219,7 +205,7 @@ export function RecordingWorkbench({authenticated,language,catalog,inventoryKey}
         {intent&&<p><strong>{c.intent}:</strong> <code>{intent.requestId}</code></p>}{exportError&&<p role="status" className="error">{showError(exportError)}</p>}{notice&&<p role="status">{notice}</p>}
       </section>
     </div>
-    <section className="result-section" aria-label={c.jobs}><h3>{c.jobs}</h3>{jobIds.map(id=><React.Fragment key={id}>{jobErrors[id]&&<p role="status" className="error">{showError(jobErrors[id])}</p>}{jobs[id]&&<JobCard job={jobs[id]} i18n={i18n}/>}</React.Fragment>)}</section>
+    <section className="result-section" aria-label={c.jobs}><h3>{c.jobs}</h3>{jobIds.map(id=><React.Fragment key={id}>{jobErrors[id]&&<p role="status" className="error">{showError(jobErrors[id])}</p>}{jobs[id]&&<JobResultCard job={jobs[id]} i18n={i18n}/>}</React.Fragment>)}</section>
     <section className="result-section" aria-label={c.saved}><h3>{c.saved}</h3><p>{c.savedHint}</p>{legacy?.saved?.length?<SavedPlayers clips={legacy.saved} i18n={i18n} download={c.savedDownload}/>:null}</section>
   </section>
 }

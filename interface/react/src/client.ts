@@ -7,7 +7,8 @@ export type NormalizedWindow = { version: 1; input: { day:string;start:string;en
 export type Discovery = { status: string; completeness: string; retryable: boolean; reasons: string[]; receivedCount: number; uniqueCount: number; limitReached: boolean }
 export type Device = { serial: string; name: string; model: string|null; homeBaseId: string|null; channel: number|null; availability: string; state: { reason: string; observedAt: string|null }; recordingExport: { supported: boolean; status: string }; capabilities: Record<string,{status:string;reason:string}> }
 export type Artifact = { id: string; name: string; url: string; playable: boolean; validated: boolean; outcome: string|null }
-export type Job = { jobId: string; requestId: string; serial: string; window: NormalizedWindow; state: string; stage: string; progress: number; result: any; artifacts: Artifact[]; error: {code:string;message:string}|null }
+export type Job = { jobId: string; requestId: string; serial: string; window: NormalizedWindow; state: string; stage: string; progress: number; result: any; artifacts: Artifact[]; error: {code:string;message:string}|null; retryOfJobId:string|null; attempt:number; cancellationRequestedAt:string|null; createdAt:string; updatedAt:string }
+export type JobPage = { jobs:Job[]; nextCursor:string|null }
 export type LegacyRecordings = { busy: boolean; timezone: string; message: string; messageI18n?: Message; query: ({serial:string;window:NormalizedWindow}|null); records: Array<{id:string;start:string;end:string}>; saved: Array<{id:string;device:string;serial?:string;start:string;end:string;bytes:number;url:string}> }
 type Contract = { $id: string; definitions: Record<string, unknown> }
 let contract: Contract | undefined
@@ -33,6 +34,13 @@ export const api = {
   ranges: (input:WindowInput) => post<any>(`/api/v1/devices/${encodeURIComponent(input.serial)}/recording-ranges`, withoutSerial(input)),
   export: (requestId:string,input:WindowInput) => post<{job:Job;reused:boolean}>('/api/v1/exports', {requestId,...input}),
   job: (jobId:string) => json<{job:Job}>(`/api/v1/jobs/${encodeURIComponent(jobId)}`),
+  jobs: (query:{pageSize:number;cursor?:string|null;state?:string;serial?:string}) => {
+    const params=new URLSearchParams({pageSize:String(query.pageSize)})
+    if(query.cursor)params.set('cursor',query.cursor);if(query.state)params.set('state',query.state);if(query.serial)params.set('serial',query.serial)
+    return json<JobPage>(`/api/v1/jobs?${params}`)
+  },
+  cancelJob: (jobId:string) => post<{job:Job}>(`/api/v1/jobs/${encodeURIComponent(jobId)}/cancel`, {}),
+  retryJob: (jobId:string,requestId:string) => post<{job:Job;reused:boolean}>(`/api/v1/jobs/${encodeURIComponent(jobId)}/retry`, {requestId}),
   recordings: () => json<LegacyRecordings>('/recordings/status'),
   eventQuery: (input:WindowInput) => post<any>('/recordings/query', input),
   eventDownload: (recordId:string,expectedQuery:ExpectedQuery) => post<any>('/recordings/download', {recordId,expectedQuery}),

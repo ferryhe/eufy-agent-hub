@@ -44,6 +44,17 @@ test('job shows honest partial and preserves the same registered player across p
   assert.match(card.querySelector('pre').textContent, /13 second gap/);
 });
 
+test('shared job cards render stopping and interrupted states without claiming terminal success', async () => {
+  const { components } = await setup();
+  const stopping = components.job({ status: 'stopping', job: { jobId: 'stop', stage: 'capture', progress: .3,
+    cancellationRequestedAt: '2026-09-13T00:00:00Z' }, videos: [] });
+  assert.match(stopping.textContent, /Stopping.*waiting for cleanup/);
+  const interrupted = components.job({ status: 'interrupted', job: { jobId: 'old', stage: 'capture', progress: .3,
+    state: 'failed', error: { code: 'JOB_INTERRUPTED', message: 'Resident restarted' } }, videos: [] });
+  assert.match(interrupted.textContent, /Interrupted.*explicit retry required/);
+  assert.doesNotMatch(interrupted.textContent, /Complete.*verified/);
+});
+
 test('known reason, stage and job error codes use ordinary localized text while unknown upstream details stay literal', async () => {
   const { components, i18n } = await setup(); i18n.setPreference('zh-CN');
   const device = components.device({ name: 'Front Door', model: 'T8600', serial: 'a', availability: 'unknown',

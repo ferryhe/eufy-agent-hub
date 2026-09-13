@@ -78,6 +78,8 @@
   "ui.capability.unsupported": "Unsupported",
   "ui.job.queued": "Queued",
   "ui.job.running": "Running",
+  "ui.job.stopping": "Stopping — waiting for cleanup",
+  "ui.job.interrupted": "Interrupted — explicit retry required",
   "ui.job.complete": "Complete — coverage and decode verified",
   "ui.job.partial": "Partial — playable footage is not complete",
   "ui.job.failed": "Failed",

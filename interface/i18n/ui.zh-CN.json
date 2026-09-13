@@ -78,6 +78,8 @@
   "ui.capability.unsupported": "不支持",
   "ui.job.queued": "排队中",
   "ui.job.running": "进行中",
+  "ui.job.stopping": "正在停止 — 等待清理完成",
+  "ui.job.interrupted": "已中断 — 需要明确重试",
   "ui.job.complete": "完整 — 覆盖与解码已校验",
   "ui.job.partial": "部分 — 可播放不等于完整",
   "ui.job.failed": "失败",

@@ -71,7 +71,8 @@ function installV1Routes(server, session, options) {
   server.removeListener('request', original);
   server.on('request', async (req, res) => {
     const origin = options.getOrigin();
-    const route = new URL(req.url, origin).pathname;
+    const requestUrl = new URL(req.url, origin);
+    const route = requestUrl.pathname;
     const send = (status, value) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(value)); };
     try {
       if (!route.startsWith('/api/v1')) {
@@ -93,6 +94,18 @@ function installV1Routes(server, session, options) {
         busy: Boolean(options.isBusy() || active()), loginUrl: '/api/v1/session/login', verificationUrl: '/api/v1/session/verify', logoutUrl: '/api/v1/session/logout',
       });
       if (stopping) throw fault(503, 'SERVICE_STOPPING', 'The resident service is shutting down.');
+      if (route === '/api/v1/jobs' && req.method === 'GET') {
+        const entries = [...requestUrl.searchParams.entries()];
+        if (new Set(entries.map(([name]) => name)).size !== entries.length)
+          throw fault(400, 'INVALID_REQUEST', 'Job list parameters cannot be repeated.');
+        const query = Object.fromEntries(entries);
+        validateRequest('jobListQuery', query);
+        let page;
+        try { page = getExporter().jobs.listPage({ pageSize: query.pageSize === undefined ? undefined : Number(query.pageSize),
+          cursor: query.cursor ?? null, state: query.state ?? null, serial: query.serial ?? null }); }
+        catch (error) { throw fault(400, 'INVALID_REQUEST', error.message); }
+        return send(200, { jobs: page.jobs.map(view), nextCursor: page.nextCursor });
+      }
       if (route === '/api/v1/live-sessions' && req.method === 'POST') {
         const data = await body(req, origin, 'liveStart');
         requireCloudSession();
