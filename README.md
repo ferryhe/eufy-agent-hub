@@ -38,7 +38,7 @@ npm start
 
 `setup` installs the bundled protocol library's locked dependencies; `build` compiles its source and copies assets. Automated tests do not need a real account/HomeBase; optional media tests depend on local tool configuration.
 
-Open **http://127.0.0.1:3187/**. On first use, sign in with your eufy account region (the tested account uses `CA`) and complete any image/email challenge. Keep the resident service running while using the page, CLI or Agent. The service listens on `127.0.0.1` only and checks the actual Host and browser Origin.
+Open **http://127.0.0.1:3187/** for the legacy interface, or **http://127.0.0.1:3187/app/** for the opt-in React shell. On first use, sign in with your eufy account region (the tested account uses `CA`) and complete any image/email challenge. Keep the resident service running while using the page, CLI or Agent. The service listens on `127.0.0.1` only and checks the actual Host and browser Origin.
 
 Completed login sessions are saved to ignored `output/auth/session.json` by default and validated on restart. **A normal restart does not always require another login.** Expired, malformed or unusable saved sessions do. Passwords and pending challenges are not saved. **Sign out** clears the saved session. `EUFY_SESSION_PATH` selects a private durable session-file location; treat that file as a credential. See [session lifecycle](capabilities/auth/README.md).
 

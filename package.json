@@ -9,22 +9,31 @@
   },
   "scripts": {
     "setup": "npm --prefix vendor/eufy-security-client ci",
-    "build": "npm --prefix vendor/eufy-security-client run build:ts",
+    "build": "npm --prefix vendor/eufy-security-client run build:ts && npm run app:build",
     "start": "node interface/server.cjs",
-    "test": "node --test \"capabilities/**/*.test.cjs\" \"api/**/*.test.cjs\" \"interface/**/*.test.cjs\" \"jobs/**/*.test.cjs\" \"cli/**/*.test.cjs\" \"agent/**/*.test.cjs\"",
+    "test": "npm run app:build && node --test \"capabilities/**/*.test.cjs\" \"api/**/*.test.cjs\" \"interface/**/*.test.cjs\" \"jobs/**/*.test.cjs\" \"cli/**/*.test.cjs\" \"agent/**/*.test.cjs\"",
     "agent": "node agent/main.cjs",
-    "agent:smoke": "node agent/validate.cjs"
+    "agent:smoke": "node agent/validate.cjs",
+    "app:build": "vite build --config interface/react/vite.config.ts",
+    "app:dev": "vite --config interface/react/vite.config.ts",
+    "browser:test": "node --test interface/react/browser.cjs"
   },
   "dependencies": {
     "@openai/agents": "0.18.0",
     "ajv": "8.20.0",
     "openai": "7.15.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
     "zod": "4.1.13"
   },
   "bin": {
     "eufy": "cli/eufy.cjs"
   },
   "devDependencies": {
-    "linkedom": "^0.18.13"
+    "@playwright/test": "1.58.2",
+    "@vitejs/plugin-react": "^6.0.1",
+    "linkedom": "^0.18.13",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.8"
   }
 }

@@ -10,6 +10,18 @@ const { errorBody, serviceError } = require('../api/messages.cjs');
 const { validateRequest } = require('../api/v1-contract.cjs');
 const { installAgentRoutes } = require('./agent/http.cjs');
 
+const appDist = path.join(__dirname, 'app-dist');
+const appMime = file => ({ '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' }[path.extname(file)] || 'application/octet-stream');
+function serveApp(req, res, pathname) {
+  if (req.method !== 'GET' || !(pathname === '/app' || pathname === '/app/' || pathname.startsWith('/app/'))) return false;
+  const relative = pathname.slice('/app/'.length);
+  const candidate = relative && !relative.includes('..') ? path.join(appDist, relative) : '';
+  const file = candidate && fs.existsSync(candidate) && fs.statSync(candidate).isFile() ? candidate : path.join(appDist, 'index.html');
+  if (!fs.existsSync(file)) { res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('React UI is not built. Run npm run build.'); return true; }
+  res.writeHead(200, { 'Content-Type': appMime(file), 'Cache-Control': file.endsWith('index.html') ? 'no-store' : 'public, max-age=31536000, immutable' });
+  fs.createReadStream(file).pipe(res); return true;
+}
+
 function createServer(options = {}) {
   const port = Number(options.port ?? process.env.EUFY_PORT ?? 3187);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('EUFY_PORT 必须是 0–65535 之间的端口。');
@@ -32,6 +44,7 @@ function createServer(options = {}) {
         : status === 401 ? 'UNAUTHENTICATED' : status === 413 ? 'INPUT_TOO_LONG' : 'INVALID_REQUEST', message } }
       : errorBody(serviceError(message, key)));
     if (req.headers.host !== new URL(origin).host) return reject(403, '请使用本地链接。', 'ui.error.localLink');
+    if (serveApp(req, res, pathname)) return;
     if (req.method === 'GET' && route === '/') return send(200, fs.readFileSync(path.join(__dirname, 'pages/local-login.html')), 'text/html; charset=utf-8');
     const scripts = { '/assets/i18n.mjs': 'i18n/i18n.mjs', '/assets/local-login.mjs': 'pages/local-login.mjs',
       '/assets/results.mjs': 'components/results.mjs', '/assets/sidebar.mjs': 'agent/sidebar.mjs',
