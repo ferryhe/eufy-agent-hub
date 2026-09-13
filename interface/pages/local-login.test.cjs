@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-async function pageHarness() {
+async function pageHarness(options = {}) {
   const { createI18n } = await import('../i18n/i18n.mjs');
   const { createResults } = await import('../components/results.mjs');
   const catalogs = Object.fromEntries(['en', 'zh-CN'].map(locale => [locale, {
@@ -40,7 +40,7 @@ async function pageHarness() {
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   const controller = await new AsyncFunction('createI18n', 'createResults', 'mountSidebar', 'document', 'window', 'navigator', 'fetch', 'setInterval',
     source + '\nreturn { submit, refresh, recordingAction, refreshRecordings };')(
-    createI18n, createResults, () => ({ render() {} }),
+    createI18n, options.createResults || createResults, () => ({ render() {} }),
     { getElementById: node, documentElement: {}, querySelectorAll: () => [] },
     { addEventListener() {} }, { languages: ['en'] }, fetch, () => {},
   );
@@ -77,6 +77,19 @@ test('the fixed Toronto page sends an explicit timezone independent of server de
   await page.node('query-recordings').listeners.submit({preventDefault() {}});
   assert.equal(sent.timezone,'America/Toronto');
   assert.equal(sent.start,'16:30');
+});
+
+test('legacy page replaces same-id rows with their service query identity and sends that expectedQuery',async()=>{
+  const page=await pageHarness({createResults:()=>({error:()=>'',timeline:value=>value,player:()=>({})})});
+  const window={version:1,input:{day:'2026-08-27',start:'16:30',end:'16:50',timezone:'America/Toronto'},normalized:{start:'2026-08-27T20:30:00.000Z',end:'2026-08-27T20:50:00.000Z',timezone:'America/Toronto'}};
+  const records=[{id:'7',start:'2026-08-27T20:30:00.000Z',end:'2026-08-27T20:31:00.000Z'}];
+  page.state.recordings={...page.state.recordings,query:{serial:'CAMERA001',window},records};await page.refreshRecordings();
+  const first=page.node('recording-results').children[0];
+  page.state.recordings={...page.state.recordings,query:{serial:'CAMERA002',window},records};await page.refreshRecordings();
+  const second=page.node('recording-results').children[0];assert.notEqual(second,first);
+  let sent;page.setPost((_url,options)=>{sent=JSON.parse(options.body);return page.response({ok:true})});
+  await second.action(second.ranges[0]);
+  assert.deepEqual(sent,{recordId:'7',expectedQuery:{serial:'CAMERA002',...window.input}});
 });
 
 for (const failure of ['network', 'http']) {

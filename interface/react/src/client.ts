@@ -1,14 +1,40 @@
 export type Session = { authenticated: boolean; phase: string; captcha: string | null; busy: boolean; loginUrl: string; verificationUrl: string; logoutUrl: string }
-export type LegacyStatus = Session & { message?: string; messageI18n?: { key: string; params?: Record<string,string|number> }; diagnostics?: string[]; diagnosticsI18n?: Array<{key:string;params?:Record<string,string|number>}|null>; devices?: unknown[] }
+export type Message = { key: string; params?: Record<string,string|number> }
+export type LegacyStatus = Session & { message?: string; messageI18n?: Message; diagnostics?: string[]; diagnosticsI18n?: Array<Message|null>; devices?: unknown[] }
+export type WindowInput = { serial: string; day: string; start: string; end: string; timezone: string }
+export type ExpectedQuery = { serial: string; day: string; start: string; end: string; timezone: string|null }
+export type NormalizedWindow = { version: 1; input: { day:string;start:string;end:string;timezone:string|null }; normalized: { start: string; end: string; timezone: string } }
+export type Discovery = { status: string; completeness: string; retryable: boolean; reasons: string[]; receivedCount: number; uniqueCount: number; limitReached: boolean }
+export type Device = { serial: string; name: string; model: string|null; homeBaseId: string|null; channel: number|null; availability: string; state: { reason: string; observedAt: string|null }; recordingExport: { supported: boolean; status: string }; capabilities: Record<string,{status:string;reason:string}> }
+export type Artifact = { id: string; name: string; url: string; playable: boolean; validated: boolean; outcome: string|null }
+export type Job = { jobId: string; requestId: string; serial: string; window: NormalizedWindow; state: string; stage: string; progress: number; result: any; artifacts: Artifact[]; error: {code:string;message:string}|null }
+export type LegacyRecordings = { busy: boolean; timezone: string; message: string; messageI18n?: Message; query: ({serial:string;window:NormalizedWindow}|null); records: Array<{id:string;start:string;end:string}>; saved: Array<{id:string;device:string;serial?:string;start:string;end:string;bytes:number;url:string}> }
 type Contract = { $id: string; definitions: Record<string, unknown> }
 let contract: Contract | undefined
 export async function getContract(): Promise<Contract> { return contract ??= await json('/api/v1/contract') }
-async function json<T>(url: string, init?: RequestInit): Promise<T> { const r = await fetch(url, init); const body = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(body?.error?.message || 'Request failed'), { body, status: r.status }); return body }
+async function json<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init)
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const message = typeof body?.error === 'string' ? body.error : body?.error?.message
+    throw Object.assign(new Error(message || 'Request failed'), { body, status: response.status })
+  }
+  return body
+}
+const post = <T>(url:string, body:unknown) => json<T>(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) })
 export const api = {
   session: () => json<Session>('/api/v1/session'),
   status: () => json<LegacyStatus>('/status'),
-  login: (email: string, password: string, country: string) => json('/api/v1/session/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email,password,country}) }),
-  verify: (code: string) => json('/api/v1/session/verify', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({code}) }),
-  refresh: () => json('/api/v1/session/refresh', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' }),
-  logout: () => json('/api/v1/session/logout', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' }),
+  login: (email: string, password: string, country: string) => post('/api/v1/session/login', {email,password,country}),
+  verify: (code: string) => post('/api/v1/session/verify', {code}),
+  refresh: () => post('/api/v1/session/refresh', {}),
+  logout: () => post('/api/v1/session/logout', {}),
+  devices: () => json<{devices:Device[];discovery:Discovery}>('/api/v1/devices'),
+  ranges: (input:WindowInput) => post<any>(`/api/v1/devices/${encodeURIComponent(input.serial)}/recording-ranges`, withoutSerial(input)),
+  export: (requestId:string,input:WindowInput) => post<{job:Job;reused:boolean}>('/api/v1/exports', {requestId,...input}),
+  job: (jobId:string) => json<{job:Job}>(`/api/v1/jobs/${encodeURIComponent(jobId)}`),
+  recordings: () => json<LegacyRecordings>('/recordings/status'),
+  eventQuery: (input:WindowInput) => post<any>('/recordings/query', input),
+  eventDownload: (recordId:string,expectedQuery:ExpectedQuery) => post<any>('/recordings/download', {recordId,expectedQuery}),
 }
+function withoutSerial({serial:_serial,...window}:WindowInput){ return window }

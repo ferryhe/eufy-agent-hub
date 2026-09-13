@@ -13,12 +13,19 @@ The resident [recording API v1](v1.md) now provides the stable device → record
 | POST | `/refresh` | `{}`, refresh devices |
 | GET | `/recordings/status` | Query state, event clips, and saved files |
 | POST | `/recordings/query` | `{serial,day,start,end,timezone?}`, date `YYYY-MM-DD`, time `HH:mm`, IANA timezone |
-| POST | `/recordings/download` | `{recordId}`, selected from the latest query |
+| POST | `/recordings/download` | `{recordId,expectedQuery?}`, selected from the latest query |
 | GET / HEAD | `/recordings/media/:id` | Saved MP4 with HTTP Range support; `?download` requests an attachment |
 
 POST requests require `Content-Type: application/json` and an `Origin` matching the actual local port. Host must also match. Recording queries and downloads require login. Query timezone defaults to `EUFY_RECORDING_TIMEZONE` or `America/Toronto`; an explicit IANA `timezone` overrides it. Nonexistent or ambiguous times are rejected, and start/end must fall on the same caller-local day. See the [shared time-window contract](../docs/recording-time-window.md) for the persisted representation and its distinction from actual footage coverage.
 
 Asynchronous operations return `202 {ok:true}` to indicate acceptance; recording operations also include `timezone`, `window` and `coverage:null`. Callers must continue polling status to determine completion. `busy` is an in-process mutual exclusion flag, and conflicts return 409. Invalid parameters return 400; unauthenticated recording operations return 401. The current protocol has no independent job IDs, persistent queue, cancellation, or automatic retries. Restarting does not restore in-progress jobs.
+
+The bundled pages send `expectedQuery:{serial,day,start,end,timezone}` from the exact
+`query.serial` and `query.window.input` status that produced the selected row.
+The resident compares it atomically with the current query before accepting a
+download, so another local page cannot redirect a same-ID row to a newer query.
+`timezone` is the echoed string or `null` exactly. Omitting `expectedQuery`
+retains the legacy external-client behavior of selecting from the latest query.
 
 Exports are written to `output/` at the repository root. At startup, event export manifests in that directory are read to restore the list of playable files. Only registered exported files are accessible through the media route. This migration does not copy private recordings, accounts, or sessions from the original repository.
 

@@ -27,7 +27,7 @@ test('job shows honest partial and preserves the same registered player across p
   const { components, i18n } = await setup();
   const view = { status: 'running', complete: false, job: { jobId: 'job-1', window, stage: 'capture', progress: 0.2 }, videos: [], diagnostics: [] };
   const card = components.job(view); assert.match(card.textContent, /Running/); assert.equal(card.querySelector('video'), null);
-  const partial = { ...view, status: 'partial', validation: { passed: true }, job: { ...view.job, stage: 'done', progress: 1,
+  const partial = { ...view, status: 'partial', coverage: { requestedSeconds: 60, observedSeconds: 47 }, diagnostics: [{ stage: 'capture', message: '13 second gap' }], validation: { passed: true }, job: { ...view.job, stage: 'done', progress: 1,
     error: { code: 'PARTIAL_RECORDING', message: 'Missing coverage' }, result: { outcome: 'partial' } },
     videos: [{ id: 'media', name: 'partial.mp4', outcome: 'partial', url: '/api/v1/jobs/job-1/artifacts/media' }] };
   components.updateJob(card, partial);
@@ -39,6 +39,9 @@ test('job shows honest partial and preserves the same registered player across p
   assert.match(card.textContent, /部分 — 可播放不等于完整/);
   assert.match(card.querySelector('[data-error]').textContent, /仅获取部分录像/);
   assert.equal(card.querySelector('progress').value, 1);
+  assert.equal(card.querySelector('details').hasAttribute('open'), true);
+  assert.match(card.querySelector('pre').textContent, /requestedSeconds.*60/);
+  assert.match(card.querySelector('pre').textContent, /13 second gap/);
 });
 
 test('known reason, stage and job error codes use ordinary localized text while unknown upstream details stay literal', async () => {
@@ -63,11 +66,13 @@ test('known reason, stage and job error codes use ordinary localized text while 
 });
 test('device cards separate dated offline evidence from execution eligibility; device names stay literal', async () => {
   const { components } = await setup();
-  const card = components.device({ name: '<img src=x>', model: 'T8600', serial: 'a', availability: 'offline',
-    state: { reason: 'connect_failed', observedAt: '2026-08-27' }, recordingExport: { supported: true, status: 'protocol_hint' } });
+  const card = components.device({ name: '<img src=x>', model: 'T8600', serial: 'a', firmware: { main: null, secondary: '1.2.3' }, availability: 'offline',
+    state: { inventoryStatus: null, reason: 'connect_failed', observedAt: '2026-08-27' }, recordingExport: { supported: true, status: 'protocol_hint' } });
   assert.equal(card.querySelector('img'), null); assert.match(card.textContent, /<img src=x>/);
   assert.match(card.textContent, /Last observed offline/); assert.match(card.textContent, /Recording export eligible/);
   assert.match(card.textContent, /not verified/);
+  assert.match(card.textContent, /Firmware: Unknown \/ 1.2.3/);
+  assert.match(card.textContent, /Inventory status: Unknown/);
 });
 
 test('reachable stable task and service errors use ordinary EN and Chinese text in shared job cards', async () => {

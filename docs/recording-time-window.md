@@ -83,6 +83,13 @@ and saved-clip responses expose their own effective timezone. The fixed page
 continues displaying Toronto time and explicitly requests `America/Toronto`,
 regardless of the API default.
 
+Bundled pages download a selected event with `recordId` plus `expectedQuery`,
+copied from that row's service echo: `query.serial` and all fields of
+`query.window.input`. The resident compares those original caller fields,
+including an explicit timezone versus `null`, with its current query before it
+selects the record. Older external callers may omit `expectedQuery` and retain
+the latest-query behavior.
+
 ## Device calendar and persistence
 
 The protocol's date query formats Date **local calendar getters** as `YYYYMMDD`,

@@ -10,7 +10,10 @@ export function createResults({ document, i18n }) {
   };
   function device(device) {
     const card = node('article', undefined, 'device-card');
-    card.append(node('strong', device.name), node('p', `${device.model} · ${device.serial}`));
+    const unknown = t('ui.capability.unknown');
+    card.append(node('strong', device.name), node('p', `${device.model || unknown} · ${device.serial}`));
+    if (device.firmware) card.append(node('p', t('ui.firmware', { main: device.firmware.main || unknown, secondary: device.firmware.secondary || unknown })));
+    if (device.state && Object.hasOwn(device.state, 'inventoryStatus')) card.append(node('p', t('ui.inventoryStatus', { status: device.state.inventoryStatus ?? unknown })));
     if (device.state) card.append(node('p', t(`ui.availability.${device.availability}`)),
       node('small', [t(`ui.reason.${device.state.reason}`, {}, device.state.reason), device.state.observedAt].filter(Boolean).join(' · ')));
     if (device.recordingExport) card.append(node('p', t(device.recordingExport.supported ? 'ui.eligible' : 'ui.ineligible')),
@@ -55,6 +58,7 @@ export function createResults({ document, i18n }) {
     card.querySelector('[data-error]').textContent = job.error ? error(job.error) : '';
     card.querySelector('[data-window]').replaceChildren(timeline({ window: job.window }));
     card.querySelector('summary').textContent = t('ui.details');
+    card.querySelector('details').toggleAttribute('open', view.status === 'partial');
     card.querySelector('pre').textContent = JSON.stringify({ coverage: view.coverage, validation: view.validation,
       diagnostics: view.diagnostics, completeness: job.result?.completeness, stage: job.stage, error: job.error }, null, 2);
     const players = card.querySelector('[data-players]');

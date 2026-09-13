@@ -57,6 +57,8 @@
   "ui.eligible": "可执行录像导出",
   "ui.ineligible": "不支持录像导出",
   "ui.evidence": "验证证据：{status}",
+  "ui.firmware": "固件：{main} / {secondary}",
+  "ui.inventoryStatus": "设备清单状态：{status}",
   "ui.normalizedWindow": "服务确认窗口：{start} — {end}（UTC）；时区：{timezone}",
   "ui.requestedWindow": "请求的本地时间：{day} {start} — {end}",
   "ui.indexHint": "索引区间表示有可用录像，不代表覆盖完整。",
