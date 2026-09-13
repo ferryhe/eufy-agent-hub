@@ -42,6 +42,10 @@ test('Chromium M1 shell uses the resident fixture without persistence or route i
   await page.waitForFunction(()=>document.activeElement?.textContent==='Sign out');
   assert.equal(await page.evaluate(()=>document.activeElement?.textContent),'Sign out');
   await page.getByRole('button',{name:'Sign out'}).click();
+  await page.getByRole('alertdialog').getByRole('button',{name:'Close'}).click();
+  await page.waitForFunction(()=>document.activeElement?.textContent==='Sign out');
+  assert.equal(await page.evaluate(()=>document.activeElement?.textContent),'Sign out');
+  await page.getByRole('button',{name:'Sign out'}).click();
   await page.getByRole('alertdialog').getByRole('button',{name:'Sign out'}).click();
   await page.getByRole('heading',{name:'Sign in'}).waitFor();
   assert.equal(logins,2);const stored=await page.evaluate(()=>[...Object.keys(localStorage).map(k=>k+'='+localStorage.getItem(k)),...Object.keys(sessionStorage).map(k=>k+'='+sessionStorage.getItem(k))].join('&'));
@@ -65,6 +69,11 @@ test('Chromium M1 shell uses the resident fixture without persistence or route i
   await page.keyboard.press('Escape');
   await page.waitForFunction(()=>!document.querySelector('.sheet-sidebar'));
   assert.equal(await page.locator('.sheet-sidebar').count(),0);
+  await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Open navigation');
+  assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),'Open navigation');
+  await page.keyboard.press('Enter');
+  await page.locator('.sheet-sidebar').getByRole('button',{name:'Close'}).click();
+  await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Open navigation');
   assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),'Open navigation');
   await page.keyboard.press('Enter');
   await page.locator('.sheet-sidebar').waitFor();
@@ -78,6 +87,11 @@ test('Chromium M1 shell uses the resident fixture without persistence or route i
   assert.equal(await page.evaluate(()=>document.activeElement?.textContent),'Close');
   await page.keyboard.press('Escape');
   assert.equal(await dialog.count(),0);
+  await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Open navigation');
+  assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),'Open navigation');
+  await page.keyboard.press('Enter');
+  await page.getByRole('button',{name:'Assistant'}).click();
+  await page.getByRole('dialog',{name:'Assistant'}).getByRole('button',{name:'Close'}).click();
   await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Open navigation');
   assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),'Open navigation');
   await page.setViewportSize({width:1440,height:900});
