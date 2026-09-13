@@ -4,32 +4,29 @@
 
 ## English
 
-An eufy capability platform for agents: account access, device discovery, recording queries, and exports are organized into reusable modules, with a shared CLI/API and local Agent integration. Additional interfaces are planned.
+A local eufy recording application with reusable capabilities, a resident HTTP API, a CLI, and an optional recording Agent. The browser provides event-recording browsing, an Agent sidebar, shared result components and a persistent workspace, with English and Simplified Chinese interfaces.
 
-**This release includes a resident recording API.** Account access, device listing and event-recording pages remain available. The [v1 API](api/v1.md) connects the supported continuous recording path to durable jobs, full media validation and explicit complete/partial/failed results. The [CLI](cli/README.md) uses that same resident API for authentication, devices, continuous recording jobs and artifact downloads. The [Recording Agent](agent/README.md) adds one local OpenAI Agents SDK runtime and structured HTTP tools; a [new real hardware record](agent/VALIDATION.md) produced a playable partial video with passed media validation and incomplete coverage. The [Agent sidebar](interface/agent/README.md) now shares device/timeline/player/job results with fixed browsing; [the dynamic workspace](interface/workspace/README.md) supports Agent composition, pinning, ordering and restoration from current API data.
+**Phase 1 and Phase 2 delivery is merged through PR #32.** The original 15 issues (#1–#14 and #16) are closed as of 2026-09-13. Completion means their scoped acceptance criteria were met; it does not establish gap-free exports or support for every device. See [delivery history](#delivery-history) and [hardware evidence and limits](#hardware-evidence-and-limits).
 
-### Available capabilities
+### What is available, and where
 
-| Directory | Contents | Status |
+| Capability | Current entry point | Boundary |
 |---|---|---|
-| [capabilities/auth](capabilities/auth) | Mega login, email/image verification, session state | Validated migration; sessions are in memory only |
-| [capabilities/devices](capabilities/devices) | Device snapshots and refresh using the shared session | Thin wrapper migrated; capability matrix pending |
-| [capabilities/recordings](capabilities/recordings) | Event queries, downloads, MP4 conversion, and decode validation | Validated migration; requires FFmpeg |
-| Same directory: `continuous.cjs` / `mux.py` | Continuous ranges, playback by time, timestamped raw-frame capture | Experimental; short clip tested, long-clip completeness pending |
-| [capabilities/live](capabilities/live) | Live video and connection lifecycle | v1 sessions; hardware validation completed for one exact device/firmware scope |
-| [api](api) | Resident v1 recording jobs and the original page protocol | Device/range/job/artifact contract; legacy page preserved |
-| [interface](interface) | Fixed login, device, event-recording, and player page | Runnable fixed browsing, Agent sidebar and persistent dynamic workspace |
-| [jobs](jobs) | Durable job identity, state, per-HomeBase queue, and output ownership | Phase A module with offline tests; service/recording integration and Phase B recovery pending |
-| [cli](cli) | HTTP command-line client for the resident service | Runnable auth, devices, ranges/exports, jobs and artifacts |
-| [agent](agent) | Single SDK Agent with structured resident HTTP tools | New real model-to-hardware run recorded; playable partial, incomplete coverage |
-| [adapters/eufy](adapters/eufy) | Shared entry point to the protocol library | Builds independently |
+| Login, verification, logout and session restoration | Browser, CLI, v1 session API | One resident account; expired or invalid saved sessions require login |
+| Device discovery and capability matrix | Browser inventory, CLI, v1 devices API | Camera/HomeBase/channel/firmware scope; discovery completeness remains unknown |
+| Event search, download and saved MP4 playback | **Browse recordings**, legacy HTTP routes | An empty event index does not prove there is no continuous footage |
+| Continuous recording ranges and export | CLI, v1 API, recording Agent | Durable jobs, conversion and full decode/coverage checks; results can be partial |
+| Job recovery, cancellation and explicit retry | Resident job service; cancel/retry via v1 API | Interrupted capture is not resumed; no dedicated CLI cancel/retry commands or full browser task center |
+| Historical playback pause/resume | v1 playback-session control API | Accepted public hardware evidence is for 1× pause/resume; no browser media URL or playback-control UI |
+| Live video | v1 live-session API and MJPEG media URL | Video-only bounded preview; no dedicated Live page or CLI/Agent Live command |
+| Natural-language export | **Ask assistant** sidebar or terminal Agent | Requires model configuration; ordinary browsing does not |
+| Shared results and dynamic workspace | Both browser views | Device/timeline/job/player components; pin, reorder and restore references |
 
-“Validated migration” means the prototype performed real operations on the current account or device and passed offline regression tests after migration. It does not mean every device model has been validated.
-The practical scope is a **CA account and HomeBase 3 (T8030) cameras on the same LAN**. The page uses **America/Toronto** time. Short-clip continuous-playback evidence comes from a T8600.
+The fixed event-search form has no direct continuous-export control. The Agent can submit continuous exports, and a workspace timeline backed by an Agent range receipt has an export action. The public [v1 contract](api/v1.md) and [legacy page routes](api/README.md) are separate interfaces.
 
 ### Quick start
 
-Install Node.js **24 or later** and npm, then run from the repository root:
+Install **Node.js 24 or later** and npm. From the repository root:
 
 ```sh
 npm ci
@@ -39,143 +36,175 @@ npm test
 npm start
 ```
 
-Open **http://127.0.0.1:3187/** and sign in on the page. Account sessions are not migrated with the source and must be re-established after a service restart.
-The interface follows the browser's preferred language (English or Simplified Chinese, with English fallback). A language selector remembers manual overrides. Recording queries still use `America/Toronto`; see the [interface localization contract](interface/i18n/README.md).
-API callers may supply an IANA `timezone`; omitted values use `EUFY_RECORDING_TIMEZONE` or `America/Toronto`. The fixed page explicitly keeps Toronto time. See the [recording time-window contract](docs/recording-time-window.md) for DST handling, persisted export context and actual-coverage limits.
-`setup` installs the protocol library's locked dependencies. `build` compiles its source and copies required assets; capability scripts load the result through the adapter.
+`setup` installs the bundled protocol library's locked dependencies; `build` compiles its source and copies assets. Automated tests do not need a real account/HomeBase; optional media tests depend on local tool configuration.
 
-If the old project still occupies port 3187, select another port in PowerShell:
+Open **http://127.0.0.1:3187/**. On first use, sign in with your eufy account region (the tested account uses `CA`) and complete any image/email challenge. Keep the resident service running while using the page, CLI or Agent. The service listens on `127.0.0.1` only and checks the actual Host and browser Origin.
+
+Completed login sessions are saved to ignored `output/auth/session.json` by default and validated on restart. **A normal restart does not always require another login.** Expired, malformed or unusable saved sessions do. Passwords and pending challenges are not saved. **Sign out** clears the saved session. `EUFY_SESSION_PATH` selects a private durable session-file location; treat that file as a credential. See [session lifecycle](capabilities/auth/README.md).
+
+If port 3187 is occupied, choose another port in PowerShell:
 
 ```powershell
 $env:EUFY_PORT = '3188'
 npm start
 ```
 
-Then open `http://127.0.0.1:3188/`. The service listens on loopback only; its HTTP factory also supports ephemeral ports for tests.
+Then open `http://127.0.0.1:3188/`; CLI callers select it with `--url http://127.0.0.1:3188`. Do not run multiple resident processes against the same job/state directories.
 
-#### Command-line client
+#### Media dependencies
 
-In another terminal, use the same running service:
-
-```sh
-node cli/eufy.cjs help
-node cli/eufy.cjs auth login
-node cli/eufy.cjs --json devices list
-```
-
-Install the executable with `npm install --global .`, then use `eufy`. Select another resident with `--url http://127.0.0.1:3188`. Export returns `job.jobId` immediately; `jobs get`, `jobs wait` and `artifacts list/get` follow that durable job. JSON results preserve the shared API's time, capability and completeness fields. See the [CLI command and exit-code guide](cli/README.md) for login challenges and the full recording workflow.
-
-#### Video dependencies
-
-Event export requires **FFmpeg**. Add it to `PATH` or specify its executable:
-
-```powershell
-$env:EUFY_FFMPEG = 'C:\Tools\ffmpeg\bin\ffmpeg.exe'
-npm start
-```
-
-Login and device queries work without FFmpeg; exporting reports a configuration error if it is unavailable.
-Only the experimental continuous-recording muxer requires Python/PyAV:
+**FFmpeg** is required for event conversion/validation, continuous export and Live preview. Add it to `PATH` or set `EUFY_FFMPEG` to the executable. Continuous export also requires **Python with PyAV**:
 
 ```sh
 python -m pip install -r capabilities/recordings/requirements.txt
 ```
 
-Continuous export is available through the resident API and CLI; the fixed page has no continuous-export button. See [continuous playback](capabilities/recordings/CONTINUOUS_PLAYBACK.md) for examples, observed messages, and limitations.
+For example, in PowerShell before starting the service:
 
-### Layout and target architecture
-
-```text
-capabilities/                Reusable business capabilities
-  auth/  devices/  recordings/  live/
-adapters/eufy/               Mega/P2P protocol entry point
-api/                        Resident recording v1 API and legacy page HTTP
-cli/                        HTTP client for the resident v1 service
-jobs/                       Phase A durable job execution and state contract
-agent/                      Recording tools and single SDK Agent runtime
-interface/
-  pages/                    Fixed feature pages
-  components/               Shared device/job cards, players, and timelines
-  agent/                    Resident conversation adapter and sidebar
-  workspace/                Registered result composition, pinning, and restoration
-vendor/eufy-security-client/ Protocol source with required local patches
-docs/                       Architecture, migration mapping, and work items
-output/                     Runtime exports; excluded from Git
+```powershell
+$env:EUFY_FFMPEG = 'C:\Tools\ffmpeg\bin\ffmpeg.exe'
+$env:EUFY_PYTHON = 'C:\Path\To\python.exe'
+npm start
 ```
 
-Target flow: **interface / agent / CLI → shared API → persistent job service → capabilities → eufy**.
-The service executes long-running exports. The agent interprets requests, selects tools, follows jobs, and presents actual results. Fixed pages and Agent mode share registered components and operations, with reference-based views composed in the main workspace.
+Replace these example paths with your installed executables. Login and device discovery work without media tools. Use the same Python executable for dependency installation and `EUFY_PYTHON`.
 
-The current fixed page queries event indexes only: **no events does not mean no continuous footage**. Continuous playback has been independently exercised, but receiving an end frame does not prove gap-free coverage.
-Natural-language export is available through the local [Agent entry](agent/README.md), separately from the fixed page. Continuous monitoring and video-content recognition are not implemented.
+#### Browser workflow
 
-### Tracked follow-up work
+1. Sign in, then choose **Browse recordings**. Select a camera, date and time interval to find event recordings, download a result and play the saved MP4.
+2. To request a continuous interval, configure the Agent below and choose **Ask assistant**, or use the CLI/API. Specify the camera, calendar date, start/end and timezone; ambiguous requests require clarification.
+3. Follow the shared job card and inspect the actual coverage and validation result. A playable `partial` output remains incomplete.
+4. Pin useful workspace results and reorder them. Browser refresh restores references and observes existing resident work without another model call.
 
-| Module | GitHub Issues |
+The interface follows browser language with English fallback and remembers manual English/Chinese selection. The fixed event form uses **America/Toronto**. API callers may provide an IANA `timezone`; otherwise the service uses `EUFY_RECORDING_TIMEZONE` or `America/Toronto`. DST gaps/ambiguous times and cross-midnight windows are rejected; split a cross-midnight request into supported windows. See [time-window semantics](docs/recording-time-window.md).
+
+#### CLI workflow
+
+Use another terminal with the resident already running. Replace `CAMERA_SERIAL`, the example date and returned IDs with your own inventory, retained footage and response values:
+
+```sh
+node cli/eufy.cjs auth status
+node cli/eufy.cjs --json devices list
+node cli/eufy.cjs --json recordings ranges CAMERA_SERIAL --day 2026-09-12 --start 16:30 --end 16:50 --timezone America/Toronto
+node cli/eufy.cjs --json recordings export --request-id camera-20260912-1630-01 --serial CAMERA_SERIAL --day 2026-09-12 --start 16:30 --end 16:50 --timezone America/Toronto
+node cli/eufy.cjs --json jobs get JOB_ID
+node cli/eufy.cjs --json jobs wait JOB_ID
+node cli/eufy.cjs --json artifacts list JOB_ID
+node cli/eufy.cjs --json artifacts get JOB_ID ARTIFACT_ID --output recording.mp4
+```
+
+Export returns `job.jobId` after durable acceptance. Exiting the submitting client or timing out a wait does not stop resident work. Reusing the same request ID returns the original job, not a retry. A new intended execution needs a new request ID. `artifacts get` writes to the specified file, replacing it if present. Inspect the artifact's outcome, playable and validated fields; a successful file download does not prove complete coverage. `npm install --global .` exposes the same CLI as `eufy`. See [commands and exit codes](cli/README.md).
+
+#### Optional recording Agent
+
+Set `OPENAI_API_KEY` in the resident process environment for the browser sidebar; `EUFY_AGENT_MODEL` optionally selects the model (default `gpt-4.1-mini`). For an ignored `.env.local` file containing that configuration, start the browser service with:
+
+```sh
+node --env-file=.env.local interface/server.cjs
+```
+
+`npm start` does not automatically load `.env.local`. Run only one resident on the chosen port. The terminal Agent is a separate client of that service:
+
+```sh
+node --env-file=.env.local agent/main.cjs --url http://127.0.0.1:3187
+```
+
+Example request: “Export Drive Way on 2026-09-12 from 16:30 to 16:50, America/Toronto.” Substitute your camera and retained date. Enter account passwords and verification codes only in the normal login flow, not chat. Agent polling observes HTTP state without paid model calls. See [Agent setup](agent/README.md) and [sidebar behavior](interface/agent/README.md).
+
+### Jobs, recovery and API-only controls
+
+The resident owns exports independently of clients. Jobs on one HomeBase execute in FIFO order. Cancellation retains ownership until media/process cleanup finishes. Live and historical playback share resident media-admission guards and do not preempt ongoing recording work.
+
+| Operation | v1 endpoint / behavior |
 |---|---|
-| jobs | [#1 Persistent jobs, queuing, cancellation, and retries](https://github.com/ferryhe/eufy-agent-hub/issues/1) |
-| api | [#2 Persistent service and v1 API](https://github.com/ferryhe/eufy-agent-hub/issues/2) |
-| auth | [#3 Session lifecycle and recovery](https://github.com/ferryhe/eufy-agent-hub/issues/3) |
-| devices | [#4 Device associations and capability matrix](https://github.com/ferryhe/eufy-agent-hub/issues/4), [#5 Pagination completeness](https://github.com/ferryhe/eufy-agent-hub/issues/5) |
-| recordings | [#6 Continuous 20-minute acceptance test](https://github.com/ferryhe/eufy-agent-hub/issues/6), [#7 Complete export jobs](https://github.com/ferryhe/eufy-agent-hub/issues/7), [#8 Timezone contract](https://github.com/ferryhe/eufy-agent-hub/issues/8), [#9 Pause/resume/speed](https://github.com/ferryhe/eufy-agent-hub/issues/9) |
-| live | [#10 Live video and connection lifecycle](https://github.com/ferryhe/eufy-agent-hub/issues/10) |
-| cli | [#11 Command-line client](https://github.com/ferryhe/eufy-agent-hub/issues/11) |
-| agent | [#12 Tool integration and natural-language export](https://github.com/ferryhe/eufy-agent-hub/issues/12) |
-| interface | [#13 Fixed pages and agent sidebar](https://github.com/ferryhe/eufy-agent-hub/issues/13), [#14 Dynamic workspace](https://github.com/ferryhe/eufy-agent-hub/issues/14) |
+| Inspect a known job | `GET /api/v1/jobs/:jobId` |
+| Cancel queued/running work | `POST /api/v1/jobs/:jobId/cancel` with `{}`; active cancellation completes after cleanup |
+| Explicitly retry failed/cancelled work | `POST /api/v1/jobs/:jobId/retry` with `{"requestId":"NEW_UNIQUE_ID"}`; creates a new job and preserves the old one |
+| Start Live | `POST /api/v1/live-sessions` with `{"requestId":"NEW_UNIQUE_ID","serial":"CAMERA_SERIAL","maxDurationMs":60000}` |
+| Observe / view / stop Live | `GET /api/v1/live-sessions/:sessionId`, `GET /api/v1/live-sessions/:sessionId/media`, `POST /api/v1/live-sessions/:sessionId/stop` with `{}` |
 
-Each item records evidence, gaps, acceptance criteria, and dependencies. Start with the job contract and v1 API while validating long continuous clips, then add agent integration before expanding the two interface modes.
+POSTs use `Content-Type: application/json` and browser callers must use the resident's matching Origin. There is currently no public endpoint to list all jobs; retain returned job IDs.
 
-### Development and validation
+On restart, safely queued jobs retain identity and order; execution still requires a valid session. Previously running capture becomes `failed` with `JOB_INTERRUPTED`, or `cancelled` if cancellation intent was saved. It is not automatically replayed or resumed. Inspect retained evidence and explicitly retry where appropriate. Existing job/artifact reads remain available after logout. Partial media is represented by `result.outcome: "partial"` with job `state: "failed"`; only affirmative coverage and validation can yield complete success. See [job lifecycle and recovery](jobs/README.md).
 
-Documentation convention: this root README is bilingual (English and Chinese); all other project documentation, including module READMEs, is written in English.
+Runtime files under ignored `output/` include session credentials, jobs, recordings and Agent history. Keep them private and retain them if you need restoration; they are not part of the source checkout. A browser refresh, client exit and resident-process restart have different effects.
 
-Tests live alongside capabilities, API, CLI, interface, and jobs code. Job tests cover durable identity, queuing, validation gates, and execution after a separate submitting client exits. `npm test` does not require a real account or HomeBase. It covers login challenges, device-discovery failures, query limits, download-completion confirmation, continuous frame timestamps, HTTP Range, and service ports.
-Migration also received independent review, an offline build with an empty npm cache, and synthetic-video export/full-decode checks. Automated tests do not establish new long-clip hardware acceptance.
+### Hardware evidence and limits
 
-- [Architecture and script migration mapping](docs/ARCHITECTURE.md)
-- [Current HTTP API](api/README.md)
-- [Event and continuous recording capabilities](capabilities/recordings/README.md)
-- [Protocol source provenance and local changes](vendor/eufy-security-client/PROVENANCE.md)
+Evidence is for a **CA account, T8030 HomeBase 3 and specific T8600 cameras on the same LAN**. Verification binds camera, HomeBase, channel and firmware; it does not transfer to a different device or firmware.
 
-Runtime state, account sessions, private footage, and debugging tools were not migrated from the old directory. The original project remains available; this repository builds and runs without depending on it.
+| Area | Recorded acceptance | Remaining limit |
+|---|---|---|
+| Continuous 20-minute export | A real 2026-08-27 16:30–16:50 Toronto export and a later Agent-to-hardware run produced playable, fully decodable media | **PARTIAL**: 51 video gaps over 250 ms, largest 4.067 s; no gap-free/lossless claim ([record](agent/VALIDATION.md)) |
+| Playback controls | Real 1× start, six-second stationary pause, resume progress and stop ([PR #31](https://github.com/ferryhe/eufy-agent-hub/pull/31)) | Accepted public scope authorizes speed 1; no verified public 2×/4×/8×/16× claim. Control API drains media; it provides no browser playback stream ([contract](capabilities/recordings/PLAYBACK_SESSIONS.md)) |
+| Live video | 2026-09-12 acceptance on one exact T8600/T8030 scope: 29 sampled frames fully decoded, confirmed stop, resource cleanup and same-HomeBase export conflict | Video-only MJPEG, up to 5 fps and 960 px wide, 1–60 s sessions; not continuous surveillance. Other devices/firmware, talkback and RTSP remain unverified ([record and lifecycle](capabilities/live/README.md)) |
+| Device discovery | Structured inventory, associations, capability evidence and explicit failure/retry state | Mega continuation remains unverified; successful discovery still reports `completeness: "unknown"` ([discovery contract](capabilities/devices/DISCOVERY.md)) |
+
+A protocol hint permits only the bounded operations allowed by that capability's contract. Unknown/unsupported Live refuses execution; playback controls require an exact persisted verified record. Installing this repository does not create private hardware evidence or automatically promote a device to verified. Event indexes, end frames, file existence and successful decoding alone do not establish continuous coverage. Video-content recognition is not implemented.
+
+### Architecture and development
+
+The browser, Agent and CLI call the resident HTTP service; the service owns account state, jobs, capability checks and protocol connections. Fixed pages also retain their legacy event routes. Long-running hardware work stays in the resident, not in a browser or model call.
+
+| Directory | Responsibility |
+|---|---|
+| `capabilities/auth`, `devices`, `recordings`, `live` | Account, inventory and media capabilities |
+| `api/`, `jobs/` | v1/legacy contracts, durable recording execution and recovery |
+| `cli/`, `agent/` | HTTP CLI and single SDK recording Agent |
+| `interface/pages`, `components`, `agent`, `workspace`, `i18n` | Native HTML/ES-module interface, shared results, conversation adapter, layout references and localization |
+| `adapters/eufy`, `vendor/eufy-security-client` | Shared protocol entry point and patched vendor source |
+| `docs/` | Architecture, evidence contracts and issue planning history |
+
+`npm test` covers capability/API/CLI/Agent/interface/job behavior using isolated fixtures. Configured media tests exercise real Python/PyAV/FFmpeg with synthetic inputs; these are not new hardware acceptance. Follow module documentation for opt-in hardware validation and never promote unreviewed evidence.
+
+Documentation convention: this root README is bilingual; other project documents are English. Additional references: [architecture](docs/ARCHITECTURE.md), [interface](interface/README.md), [recording capabilities](capabilities/recordings/README.md), [protocol provenance](vendor/eufy-security-client/PROVENANCE.md).
+
+### Delivery history
+
+The original issues are completed scoped deliveries, not an outstanding implementation list:
+
+| Delivery | Closed issues |
+|---|---|
+| Durable jobs, v1 service and session lifecycle | [#1](https://github.com/ferryhe/eufy-agent-hub/issues/1), [#2](https://github.com/ferryhe/eufy-agent-hub/issues/2), [#3](https://github.com/ferryhe/eufy-agent-hub/issues/3) |
+| Device association, evidence and discovery completeness reporting | [#4](https://github.com/ferryhe/eufy-agent-hub/issues/4), [#5](https://github.com/ferryhe/eufy-agent-hub/issues/5) |
+| Continuous export acceptance/pipeline, time contract and playback controls | [#6](https://github.com/ferryhe/eufy-agent-hub/issues/6), [#7](https://github.com/ferryhe/eufy-agent-hub/issues/7), [#8](https://github.com/ferryhe/eufy-agent-hub/issues/8), [#9](https://github.com/ferryhe/eufy-agent-hub/issues/9) |
+| Live-session lifecycle | [#10](https://github.com/ferryhe/eufy-agent-hub/issues/10) |
+| CLI and recording Agent | [#11](https://github.com/ferryhe/eufy-agent-hub/issues/11), [#12](https://github.com/ferryhe/eufy-agent-hub/issues/12) |
+| Shared browser results, workspace and English/Chinese localization | [#13](https://github.com/ferryhe/eufy-agent-hub/issues/13), [#14](https://github.com/ferryhe/eufy-agent-hub/issues/14), [#16](https://github.com/ferryhe/eufy-agent-hub/issues/16) |
+
+Phase 2 includes job recovery/cancel/retry ([PR #29](https://github.com/ferryhe/eufy-agent-hub/pull/29)), discovery reporting ([PR #30](https://github.com/ferryhe/eufy-agent-hub/pull/30)), playback controls ([PR #31](https://github.com/ferryhe/eufy-agent-hub/pull/31)) and Live ([PR #32](https://github.com/ferryhe/eufy-agent-hub/pull/32)). Hardware and interface limits above remain explicit after issue closure.
 
 ### Credits and license
 
-Based on the MIT-licensed protocol source from [bropat/eufy-security-client](https://github.com/bropat/eufy-security-client). A source snapshot with explicit provenance temporarily retains unpublished local patches, including historical playback; the adapter can later switch to a separate protocol package.
-Upstream has announced retirement of legacy cloud APIs and migration toward Mega, so its full feature list is not automatically supported by this hub.
-
-This project uses the [MIT License](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). It is a community project and is not affiliated with eufy or Anker.
+Based on the MIT-licensed [bropat/eufy-security-client](https://github.com/bropat/eufy-security-client), with a source snapshot retaining documented local patches. Upstream features are not automatically supported by this hub. See [MIT License](LICENSE), [third-party notices](THIRD_PARTY_NOTICES.md) and [source provenance](vendor/eufy-security-client/PROVENANCE.md). This community project is not affiliated with eufy or Anker.
 
 ---
 
 ## 中文
 
-面向 Agent 的 eufy 能力平台：把登录、设备发现、录像查询与导出封装成独立能力，提供统一 CLI/API 和本地 Agent；更多界面待实现。
+本地运行的 eufy 录像应用，包含可复用能力、常驻 HTTP API、CLI 和可选的录像 Agent。浏览器已提供事件录像查询、Agent 侧栏、共享结果组件和可恢复工作区，支持英文和简体中文。
 
-**当前版本已提供常驻录像 API。** 登录、设备列表与事件录像页面继续可用。[v1 API](api/v1.md) 将已支持的连续录像路径接入持久化任务和完整媒体校验，明确区分完整、部分与失败结果。[CLI](cli/README.md) 已通过同一常驻 API 提供登录、设备、连续录像任务和产物下载。[录像 Agent](agent/README.md) 已加入本地单 Agent SDK 运行时和结构化 HTTP 工具；[新的实机记录](agent/VALIDATION.md) 已产出可播放的 partial 视频，媒体校验通过，但录像覆盖不完整。[Agent 侧栏](interface/agent/README.md) 已与固定浏览共用设备、时间轴、播放器和任务结果；[动态工作区](interface/workspace/README.md) 已支持 Agent 组合、固定、排序和从当前 API 数据恢复。
+**Phase 1、Phase 2 已交付，代码合并至 PR #32。** 截至 2026-09-13，原有 15 个 Issue（#1–#14、#16）均已关闭。这表示完成各项约定范围的验收，不代表已实现无缺口导出或验证所有设备。交付记录见下方，实机限制单独列明。
 
-### 目前可以做什么
+### 现在能做什么，从哪里操作
 
-| 目录 | 当前内容 | 状态 |
+| 功能 | 当前入口 | 边界 |
 |---|---|---|
-| [capabilities/auth](capabilities/auth) | Mega 登录、邮件/图片验证码、会话状态 | 已验证迁入；会话仅在内存 |
-| [capabilities/devices](capabilities/devices) | 设备列表快照与刷新，复用登录会话 | 已迁入薄封装；能力矩阵待补 |
-| [capabilities/recordings](capabilities/recordings) | 事件查询、下载、MP4 转换及解码验证 | 已验证迁入；依赖 FFmpeg |
-| 同上 `continuous.cjs` / `mux.py` | 连续时段查询、按时间回放、带时间戳的原始帧捕获 | 实验性；短片实测，长片完整性待验收 |
-| [capabilities/live](capabilities/live) | 实时视频与连接生命周期 | v1 会话已交付；已完成一个精确设备及固件范围的硬件验证 |
-| [api](api) | 常驻 v1 录像任务与原页面协议 | 设备/范围/任务/产物契约；保留旧页面 |
-| [interface](interface) | 固定登录、设备、事件录像和播放器页面 | 固定浏览、Agent 侧栏和可恢复动态工作区可运行 |
-| [jobs](jobs) | 持久化任务标识、状态、HomeBase 排队与独立产物目录 | Phase A 模块已通过离线测试；服务和录像接入、Phase B 恢复能力待完成 |
-| [cli](cli) | 常驻服务的 HTTP 命令行客户端 | 可运行登录、设备、录像范围/导出、任务与产物命令 |
-| [agent](agent) | 单 Agent SDK 与常驻 HTTP 结构化工具 | 已记录新的真实模型到实机流程；视频可播放，结果为覆盖不完整的 partial |
-| [adapters/eufy](adapters/eufy) | 业务能力访问协议库的统一入口 | 可独立构建 |
+| 登录、验证码、退出和会话恢复 | 页面、CLI、v1 会话 API | 单账号常驻会话；保存的会话失效时需要登录 |
+| 设备发现与能力矩阵 | 页面设备列表、CLI、v1 设备 API | 按摄像头/HomeBase/通道/固件记录；设备发现完整性仍未知 |
+| 事件查询、下载、已保存 MP4 播放 | **浏览录像**及旧版 HTTP 路由 | 没有事件不等于没有连续录像 |
+| 连续录像范围查询与导出 | CLI、v1 API、录像 Agent | 持久化任务、转换、全片解码及覆盖校验；结果可能为 partial |
+| 任务恢复、取消、显式重试 | 常驻任务服务；取消/重试使用 v1 API | 中断捕获不能续传；CLI 尚无取消/重试子命令，页面尚无完整任务中心 |
+| 历史回放暂停/恢复 | v1 回放会话控制 API | 公开验收为 1× 暂停/恢复；没有浏览器媒体地址或回放控制页面 |
+| 实时视频 | v1 Live 会话 API 和 MJPEG 地址 | 有时限的纯视频预览；暂无专用 Live 页面或 CLI/Agent Live 命令 |
+| 自然语言导出 | **询问助手**侧栏或终端 Agent | 需要配置模型；普通浏览不需要 |
+| 共享结果与动态工作区 | 两种页面模式 | 设备、时间轴、任务、播放器组件；支持固定、排序和引用恢复 |
 
-“已验证迁入”指原型在当前账号或设备上完成过实际操作，迁移后通过离线回归测试，不表示所有型号都已验证。
-当前实际使用范围为 **CA 账号、同一局域网的 HomeBase 3（T8030）及其摄像头**；页面时间使用 **America/Toronto**。连续回放短片证据来自 T8600。
+固定事件查询表单没有直接导出连续录像的按钮。Agent 可以提交连续导出；工作区中由 Agent 范围查询凭据生成的时间轴也提供导出操作。[v1 契约](api/v1.md)与[旧页面路由](api/README.md)是不同接口。
 
 ### 快速开始
 
-需要 Node.js **24 或以上**和 npm。在本仓库根目录执行：
+安装 **Node.js 24 或以上**及 npm，在仓库根目录执行：
 
 ```sh
 npm ci
@@ -185,109 +214,144 @@ npm test
 npm start
 ```
 
-打开 **http://127.0.0.1:3187/**，在页面中登录。账号会话不随源码迁移，服务重启后需要重新登录。
-界面默认跟随浏览器语言，支持英文和简体中文，其他语言回退到英文；可手动切换并记住选择。录像查询仍使用 `America/Toronto`，详见 [界面多语言约定](interface/i18n/README.md)。
-API 调用方可明确提供 IANA `timezone`；省略时使用 `EUFY_RECORDING_TIMEZONE`，未配置则使用 `America/Toronto`。固定页面仍明确使用 Toronto 时间。夏令时处理、导出时间上下文与实际覆盖范围的区别见 [录像时间窗口约定](docs/recording-time-window.md)。
-`setup` 根据协议库锁文件安装依赖；`build` 编译协议源码并复制必要资源，业务脚本通过适配器加载构建结果。
+`setup` 按锁文件安装协议库依赖，`build` 编译协议库并复制资源。自动测试不需要真实账号/HomeBase；部分媒体测试需要配置本机工具。
 
-若旧项目仍占用 3187，可在 PowerShell 中选择另一个端口：
+打开 **http://127.0.0.1:3187/**。首次使用时填写账号所属地区（已测试账号为 `CA`），完成登录和可能出现的图片/邮件验证码。页面、CLI 和 Agent 使用期间保持常驻服务运行。服务仅监听 `127.0.0.1`，并检查实际 Host 和浏览器 Origin。
+
+登录成功后，会话默认保存到不进入 Git 的 `output/auth/session.json`，重启时会验证并尝试恢复。**正常重启不一定需要重新登录。** 保存的会话过期、损坏或不可用时才需要重新登录。密码和未完成的验证码流程不会保存；**退出登录**会清除保存的会话。可通过 `EUFY_SESSION_PATH` 指定私有、持久的位置，该文件应按登录凭据保管。详见[会话生命周期](capabilities/auth/README.md)。
+
+如果 3187 被占用，可在 PowerShell 中设置：
 
 ```powershell
 $env:EUFY_PORT = '3188'
 npm start
 ```
 
-此时打开 `http://127.0.0.1:3188/`。服务默认仅监听本机，HTTP 工厂也支持随机端口供测试使用。
+然后打开 `http://127.0.0.1:3188/`，CLI 使用 `--url http://127.0.0.1:3188`。不要让多个常驻进程共用同一任务/状态目录。
 
-#### 命令行客户端
+#### 媒体依赖
 
-在另一个终端使用同一个正在运行的服务：
-
-```sh
-node cli/eufy.cjs help
-node cli/eufy.cjs auth login
-node cli/eufy.cjs --json devices list
-```
-
-执行 `npm install --global .` 安装后可直接使用 `eufy`。用 `--url http://127.0.0.1:3188` 选择其他常驻服务。导出立即返回 `job.jobId`，再用 `jobs get`、`jobs wait` 和 `artifacts list/get` 查看任务和下载产物。JSON 结果保留统一 API 的时间、能力和完整性字段。登录挑战、完整录像流程及退出码见 [CLI 使用说明](cli/README.md)。
-
-#### 视频依赖
-
-事件导出需要 **FFmpeg**。将它加入 `PATH`，或配置可执行文件：
-
-```powershell
-$env:EUFY_FFMPEG = 'C:\Tools\ffmpeg\bin\ffmpeg.exe'
-npm start
-```
-
-没有 FFmpeg 时登录和设备查询仍能运行，导出会返回配置提示。
-只有实验性连续录像封装需要 Python/PyAV，安装方式为：
+事件转换与验证、连续导出、Live 预览都需要 **FFmpeg**。将它放入 `PATH`，或通过 `EUFY_FFMPEG` 指定可执行文件。连续导出还需要 **Python 和 PyAV**：
 
 ```sh
 python -m pip install -r capabilities/recordings/requirements.txt
 ```
 
-连续导出已可通过常驻 API 和 CLI 调用，固定页面暂无连续导出按钮；调用示例、真实报文及限制见 [连续回放说明](capabilities/recordings/CONTINUOUS_PLAYBACK.md)。
+PowerShell 配置示例：
 
-### 目录与目标架构
-
-```text
-capabilities/               按功能封装，可复用的业务能力
-  auth/  devices/  recordings/  live/
-adapters/eufy/              Mega/P2P 协议入口
-api/                       常驻录像 v1 API 与旧页面 HTTP
-cli/                       常驻 v1 服务的 HTTP 客户端
-jobs/                      Phase A 持久化任务执行与状态契约
-agent/                     录像工具与单 Agent SDK 运行时
-interface/
-  pages/                   固定功能页面
-  components/              共享设备/任务卡片、播放器、时间轴
-  agent/                   常驻对话接口与侧栏
-  workspace/               注册组件结果组合、固定与恢复
-vendor/eufy-security-client/ 带必要本地补丁的协议源码
-docs/                      架构、迁移清单与工作项
-output/                    运行时导出文件，不提交 Git
+```powershell
+$env:EUFY_FFMPEG = 'C:\Tools\ffmpeg\bin\ffmpeg.exe'
+$env:EUFY_PYTHON = 'C:\Path\To\python.exe'
+npm start
 ```
 
-目标调用关系：**界面 / Agent / CLI → 统一 API → 常驻任务服务 → 能力模块 → eufy**。
-长时录像提取由服务执行；Agent 负责理解需求、选择工具、跟进任务和展示真实结果。固定页面与 Agent 模式共用组件，播放器和任务卡可以在主区域组合呈现。
+请替换为实际安装路径，并保证安装 PyAV 与 `EUFY_PYTHON` 使用同一个 Python。没有媒体工具时，登录和设备发现仍可运行。
 
-当前固定页面只查询事件索引，**没有事件不等于没有连续录像**；连续回放已取得独立调用证据，但不能把收到结束帧等同于整段无丢失。
-自然语言导出可通过本地 [Agent 入口](agent/README.md) 或固定页面的 [Agent 侧栏](interface/agent/README.md) 使用。持续监控和视频内容识别功能仍未实现。
+#### 页面操作
 
-### 已建立的后续工作
+1. 登录后选择**浏览录像**，选择摄像头、日期和时间范围，查询事件、下载片段并播放已保存的 MP4。
+2. 要导出连续时段，先按下方说明配置 Agent，再选择**询问助手**；也可使用 CLI/API。明确摄像头、日期、起止时间和时区，不明确时由 Agent 追问。
+3. 查看共享任务卡上的进度、实际覆盖和校验结果。可播放的 `partial` 文件仍是覆盖不完整的结果。
+4. 将常用结果固定到工作区并调整顺序。刷新页面会恢复引用、查询已有任务，不会再次调用模型。
 
-| 模块 | GitHub Issues |
+界面跟随浏览器语言，默认回退英文，也可手动选择并记住英文/中文。固定事件查询使用 **America/Toronto**。API 可指定 IANA `timezone`；省略时使用 `EUFY_RECORDING_TIMEZONE` 或 `America/Toronto`。夏令时不存在/重复的本地时间以及跨午夜窗口会被拒绝；跨午夜需求需拆为支持的窗口。详见[时间窗口约定](docs/recording-time-window.md)。
+
+#### CLI 操作
+
+保持常驻服务运行，在另一终端执行。将 `CAMERA_SERIAL`、示例日期和返回的 ID 替换为自己的设备、仍有录像的日期和接口返回值：
+
+```sh
+node cli/eufy.cjs auth status
+node cli/eufy.cjs --json devices list
+node cli/eufy.cjs --json recordings ranges CAMERA_SERIAL --day 2026-09-12 --start 16:30 --end 16:50 --timezone America/Toronto
+node cli/eufy.cjs --json recordings export --request-id camera-20260912-1630-01 --serial CAMERA_SERIAL --day 2026-09-12 --start 16:30 --end 16:50 --timezone America/Toronto
+node cli/eufy.cjs --json jobs get JOB_ID
+node cli/eufy.cjs --json jobs wait JOB_ID
+node cli/eufy.cjs --json artifacts list JOB_ID
+node cli/eufy.cjs --json artifacts get JOB_ID ARTIFACT_ID --output recording.mp4
+```
+
+导出持久化受理后立即返回 `job.jobId`。提交客户端退出或等待超时，不会停止服务中的任务。重复请求 ID 返回原任务，不会重试；新的执行需要新的请求 ID。产物下载会写入并覆盖指定文件，应检查产物的 outcome、playable、validated 字段；下载成功不代表覆盖完整。可用 `npm install --global .` 安装为 `eufy` 命令。详见[CLI 命令和退出码](cli/README.md)。
+
+#### 可选的录像 Agent
+
+页面侧栏需要在**常驻服务进程**中配置 `OPENAI_API_KEY`；`EUFY_AGENT_MODEL` 可指定模型，默认 `gpt-4.1-mini`。若使用不进入 Git 的 `.env.local` 文件，可这样启动页面服务：
+
+```sh
+node --env-file=.env.local interface/server.cjs
+```
+
+`npm start` 不会自动读取 `.env.local`。同一端口只运行一个常驻服务。终端 Agent 是该服务的另一个客户端：
+
+```sh
+node --env-file=.env.local agent/main.cjs --url http://127.0.0.1:3187
+```
+
+请求示例：“导出 Drive Way 在 2026-09-12 的 16:30 到 16:50 录像，时区 America/Toronto。”请替换实际摄像头和仍有录像的日期。账号密码、验证码只在正常登录流程填写，不要放进对话。任务状态轮询只查询 HTTP，不消耗模型调用。详见 [Agent 配置](agent/README.md)及[侧栏说明](interface/agent/README.md)。
+
+### 任务恢复与仅 API 提供的操作
+
+录像由常驻服务执行，同一 HomeBase 的任务按先后排队。取消操作要等媒体和进程资源清理完才释放占用。Live、历史回放和其他录像操作共用媒体占用检查，不会抢占正在执行的工作。
+
+| 操作 | v1 接口及行为 |
 |---|---|
-| jobs | [#1 持久化任务、排队、取消与重试](https://github.com/ferryhe/eufy-agent-hub/issues/1) |
-| api | [#2 常驻服务与 v1 协议](https://github.com/ferryhe/eufy-agent-hub/issues/2) |
-| auth | [#3 会话生命周期与恢复](https://github.com/ferryhe/eufy-agent-hub/issues/3) |
-| devices | [#4 设备关联与能力矩阵](https://github.com/ferryhe/eufy-agent-hub/issues/4)、[#5 分页完整性](https://github.com/ferryhe/eufy-agent-hub/issues/5) |
-| recordings | [#6 连续 20 分钟验收](https://github.com/ferryhe/eufy-agent-hub/issues/6)、[#7 完整导出任务](https://github.com/ferryhe/eufy-agent-hub/issues/7)、[#8 时区契约](https://github.com/ferryhe/eufy-agent-hub/issues/8)、[#9 暂停/恢复/倍速](https://github.com/ferryhe/eufy-agent-hub/issues/9) |
-| live | [#10 实时视频与连接生命周期](https://github.com/ferryhe/eufy-agent-hub/issues/10) |
-| cli | [#11 命令行客户端](https://github.com/ferryhe/eufy-agent-hub/issues/11) |
-| agent | [#12 工具接入与自然语言导出](https://github.com/ferryhe/eufy-agent-hub/issues/12) |
-| interface | [#13 固定页面与 Agent 侧栏](https://github.com/ferryhe/eufy-agent-hub/issues/13)、[#14 动态工作区](https://github.com/ferryhe/eufy-agent-hub/issues/14) |
+| 查看已知任务 | `GET /api/v1/jobs/:jobId` |
+| 取消排队/运行中的任务 | `POST /api/v1/jobs/:jobId/cancel`，正文 `{}`；运行中的任务等清理完成后才成为 cancelled |
+| 显式重试失败/取消任务 | `POST /api/v1/jobs/:jobId/retry`，正文 `{"requestId":"NEW_UNIQUE_ID"}`；创建新任务并保留原任务 |
+| 启动 Live | `POST /api/v1/live-sessions`，正文 `{"requestId":"NEW_UNIQUE_ID","serial":"CAMERA_SERIAL","maxDurationMs":60000}` |
+| 查看/播放/停止 Live | `GET /api/v1/live-sessions/:sessionId`、`GET /api/v1/live-sessions/:sessionId/media`、`POST /api/v1/live-sessions/:sessionId/stop`（正文 `{}`） |
 
-每项包含已有证据、缺口、验收条件和依赖。建议先推进任务契约与 v1 API，同时完成连续长片验证，再接 Agent，最后完善两种交互界面。
+POST 使用 `Content-Type: application/json`；浏览器请求的 Origin 必须匹配常驻服务。目前没有公开的全部任务列表接口，请保留返回的任务 ID。
 
-### 开发与验证
+重启后，安全排队的任务保留标识与顺序，执行仍要求有效登录。原先运行中的捕获标记为 `failed` / `JOB_INTERRUPTED`；若已保存取消意图，则标记为 `cancelled`。不会自动重放或续传，应先检查保留的证据，再按需显式重试。退出登录后仍可读取已有任务及产物。部分录像使用 `result.outcome: "partial"`、任务状态 `state: "failed"`；只有覆盖和媒体验证均明确通过才算完整成功。详见[任务生命周期](jobs/README.md)。
 
-文档约定：根 README 使用中英文双语；其他项目文档（包括模块 README）统一使用英文。
+不进入 Git 的 `output/` 包含会话凭据、任务、录像和 Agent 历史。需要恢复时应保留这些私有文件；源码本身不包含它们。页面刷新、客户端退出和服务进程重启的影响不同。
 
-测试与能力、API、CLI、界面、任务代码放在同一目录。任务测试覆盖持久化标识、排队、校验门槛，以及独立提交客户端退出后继续执行。`npm test` 不需要真实账号或 HomeBase；覆盖登录挑战、设备发现失败、查询分页限制、下载完成确认、连续帧时间、HTTP Range 和服务端口。
-本次迁移还做了独立审查、空 npm 缓存下的离线构建，以及使用合成视频的导出/完整解码检查。没有通过自动测试声称完成新的实机长片验收。
+### 实机验收与限制
 
-- [架构与逐脚本迁移清单](docs/ARCHITECTURE.md)
-- [当前 HTTP 接口](api/README.md)
-- [事件与连续录像能力](capabilities/recordings/README.md)
-- [协议源码来源与本地改动](vendor/eufy-security-client/PROVENANCE.md)
+已有证据来自 **CA 账号、同局域网的 T8030 HomeBase 3 和指定 T8600 摄像头**。验证绑定摄像头、HomeBase、通道和固件，不自动适用于其他设备或固件。
 
-旧目录中的运行状态、账号会话、私人录像及诊断工具未迁入本仓库。原项目继续保留；新仓库构建和运行不依赖旧目录。
+| 项目 | 已有验收 | 仍保留的限制 |
+|---|---|---|
+| 连续 20 分钟导出 | 2026-08-27 多伦多时间 16:30–16:50 的实机导出，以及后续 Agent 到实机流程，产出可播放且全片解码通过的视频 | **PARTIAL**：51 处超过 250 ms 的视频缺口，最大 4.067 秒；不声称无缺口或无损（[记录](agent/VALIDATION.md)） |
+| 历史回放控制 | 实机完成 1× 启动、6 秒静止暂停、恢复推进和停止（[PR #31](https://github.com/ferryhe/eufy-agent-hub/pull/31)） | 已接受的公开范围仅授权 speed 1；不声称 2×/4×/8×/16× 已公开验证。控制 API 消费媒体但不提供浏览器播放流（[契约](capabilities/recordings/PLAYBACK_SESSIONS.md)） |
+| 实时视频 | 2026-09-12 验收一个精确 T8600/T8030 范围：29 个采样帧全解码、确认停止、资源清理及同 HomeBase 导出冲突处理 | 纯视频 MJPEG，最高 5 fps、宽 960 px、会话 1–60 秒；不是持续监控。其他设备/固件、talkback、RTSP 未验证（[记录与生命周期](capabilities/live/README.md)） |
+| 设备发现 | 已提供结构化设备、关联、能力证据及明确的失败/重试状态 | Mega 后续分页未验证；成功查询仍报告 `completeness: "unknown"`（[发现契约](capabilities/devices/DISCOVERY.md)） |
+
+协议提示仅允许对应契约规定的有限尝试。Live 为 unknown/unsupported 时拒绝执行；回放控制要求精确匹配的持久化验证记录。安装仓库不会创建私人实机证据，也不会自动把设备提升为 verified。事件索引、结束帧、文件存在或解码成功，都不能单独证明连续录像完整。视频内容识别尚未实现。
+
+### 架构与开发
+
+浏览器、Agent 和 CLI 调用常驻 HTTP 服务，由服务统一管理账号、任务、能力检查及协议连接；固定页面的事件功能仍使用旧路由。长时间的实机工作留在服务进程中执行。
+
+| 目录 | 职责 |
+|---|---|
+| `capabilities/auth`、`devices`、`recordings`、`live` | 账号、设备和媒体能力 |
+| `api/`、`jobs/` | v1/旧接口、持久化录像任务及恢复 |
+| `cli/`、`agent/` | HTTP CLI 与单 SDK 录像 Agent |
+| `interface/pages`、`components`、`agent`、`workspace`、`i18n` | 原生 HTML/ES 模块页面、共享结果、对话适配、布局引用及多语言 |
+| `adapters/eufy`、`vendor/eufy-security-client` | 统一协议入口及带本地补丁的协议源码 |
+| `docs/` | 架构、证据契约和任务规划历史 |
+
+`npm test` 使用隔离夹具覆盖能力、API、CLI、Agent、界面与任务行为。配置好媒体工具后，相关测试使用合成输入运行真实 Python/PyAV/FFmpeg；这不等于新增实机验收。实机验证按模块文档执行，未经审核的证据不提升能力状态。
+
+文档约定：根 README 中英双语，其他项目文档使用英文。参考：[架构](docs/ARCHITECTURE.md)、[界面](interface/README.md)、[录像能力](capabilities/recordings/README.md)、[协议来源](vendor/eufy-security-client/PROVENANCE.md)。
+
+### 交付记录
+
+原有 Issue 是已完成的阶段交付记录，不是仍待开发的清单：
+
+| 交付 | 已关闭 Issue |
+|---|---|
+| 持久化任务、v1 服务、会话生命周期 | [#1](https://github.com/ferryhe/eufy-agent-hub/issues/1)、[#2](https://github.com/ferryhe/eufy-agent-hub/issues/2)、[#3](https://github.com/ferryhe/eufy-agent-hub/issues/3) |
+| 设备关联、能力证据、发现完整性报告 | [#4](https://github.com/ferryhe/eufy-agent-hub/issues/4)、[#5](https://github.com/ferryhe/eufy-agent-hub/issues/5) |
+| 连续导出验收/流水线、时区、回放控制 | [#6](https://github.com/ferryhe/eufy-agent-hub/issues/6)、[#7](https://github.com/ferryhe/eufy-agent-hub/issues/7)、[#8](https://github.com/ferryhe/eufy-agent-hub/issues/8)、[#9](https://github.com/ferryhe/eufy-agent-hub/issues/9) |
+| Live 会话生命周期 | [#10](https://github.com/ferryhe/eufy-agent-hub/issues/10) |
+| CLI 和录像 Agent | [#11](https://github.com/ferryhe/eufy-agent-hub/issues/11)、[#12](https://github.com/ferryhe/eufy-agent-hub/issues/12) |
+| 页面共享结果、工作区、中英多语言 | [#13](https://github.com/ferryhe/eufy-agent-hub/issues/13)、[#14](https://github.com/ferryhe/eufy-agent-hub/issues/14)、[#16](https://github.com/ferryhe/eufy-agent-hub/issues/16) |
+
+Phase 2 包括任务恢复/取消/重试（[PR #29](https://github.com/ferryhe/eufy-agent-hub/pull/29)）、设备发现报告（[PR #30](https://github.com/ferryhe/eufy-agent-hub/pull/30)）、回放控制（[PR #31](https://github.com/ferryhe/eufy-agent-hub/pull/31)）和 Live（[PR #32](https://github.com/ferryhe/eufy-agent-hub/pull/32)）。Issue 关闭后，上述实机和页面限制仍然保留。
 
 ### 来源与许可证
 
-基于 [bropat/eufy-security-client](https://github.com/bropat/eufy-security-client) 的 MIT 协议源码。暂时使用带明确来源的源码快照，保留历史回放等尚未发布的本地补丁；后续可通过 adapter 替换为独立协议包。
-上游已公告旧云 API 退役及向 Mega 迁移，因此上游列出的所有功能不自动视为本项目可用能力。
-
-本项目采用 [MIT License](LICENSE)，第三方声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。这是社区项目，与 eufy/Anker 官方没有隶属关系。
+基于 MIT 许可的 [bropat/eufy-security-client](https://github.com/bropat/eufy-security-client)，源码快照保留有记录的本地补丁。上游功能不自动等于本应用支持的能力。见 [MIT License](LICENSE)、[第三方声明](THIRD_PARTY_NOTICES.md)和[源码来源](vendor/eufy-security-client/PROVENANCE.md)。这是社区项目，与 eufy 或 Anker 官方没有隶属关系。
