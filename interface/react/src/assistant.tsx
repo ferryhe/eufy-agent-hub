@@ -15,7 +15,7 @@ const storage=()=>{try{return localStorage}catch{return undefined}}
 const text=(message:AppendMessage)=>message.content.filter(part=>part.type==='text').map(part=>part.text).join('')
 const problem=(error:any)=>error?.body?.error||(error?.code?error:{code:'SERVICE_UNAVAILABLE',message:error?.message||'Request failed'})
 
-export function AssistantWorkspace({open,title,close,closeLabel,returnFocusRef,language,catalog,onManual}:{open:boolean;title:string;close:()=>void;closeLabel:string;returnFocusRef:React.RefObject<HTMLElement|null>;language:Language;catalog:Record<string,string>;onManual:()=>void}) {
+export function AssistantWorkspace({open,title,close,closeLabel,returnFocusRef,language,catalog,onManual,authenticated}:{open:boolean;title:string;close:()=>void;closeLabel:string;returnFocusRef:React.RefObject<HTMLElement|null>;language:Language;catalog:Record<string,string>;onManual:()=>void;authenticated:boolean|undefined}) {
   const live=useRef({language,catalog});live.current={language,catalog}
   const translate=useCallback((name:string,params:Record<string,unknown>={},fallback=name)=>{
     const template=live.current.catalog[name]||fallback
@@ -23,7 +23,7 @@ export function AssistantWorkspace({open,title,close,closeLabel,returnFocusRef,l
   },[])
   const i18n=useRef<any>(null)
   if(!i18n.current)i18n.current={get locale(){return live.current.language},t:translate}
-  const workspace=useRef<any>(),stateRef=useRef<AgentState>(),inventoryRef=useRef<any>(),polling=useRef<Promise<AgentState|undefined>>(),runtimeRef=useRef<any>()
+  const workspace=useRef<any>(),stateRef=useRef<AgentState>(),inventoryRef=useRef<any>(),polling=useRef<Promise<AgentState|undefined>>(),pollRef=useRef<()=>Promise<AgentState|undefined>>(),runtimeRef=useRef<any>()
   const pending=useRef<Pending|undefined>(savedPending()),sending=useRef(false)
   const [state,setState]=useState<AgentState>(),[loading,setLoading]=useState(true),[submitError,setSubmitError]=useState<any>(),[responseLocale,setResponseLocale]=useState(()=>{const value=read('responseLocale','auto');return ['en','zh-CN'].includes(value)?value:'auto'}),[sendBusy,setSendBusy]=useState(false)
 
@@ -36,18 +36,21 @@ export function AssistantWorkspace({open,title,close,closeLabel,returnFocusRef,l
     if(composer?.getState().text===acceptedText){composer.setText('');write('draft','')}
   },[])
   const poll=useCallback(()=>{
+    if(authenticated===undefined)return Promise.resolve(undefined)
     if(polling.current)return polling.current
     const request=(async()=>{try{
-      const next=await api.agentState(workspace.current?.jobIds()||[]);let inventory
-      try{inventory=await api.devices()}catch(error){inventory={devices:[],error:problem(error)}}
-      stateRef.current=next;inventoryRef.current=inventory;setState(next);setLoading(false);setSubmitError(current=>['SERVICE_UNAVAILABLE','INTERFACE_UNAVAILABLE'].includes(current?.code)?undefined:current);acknowledge(next)
+      const next=await api.agentState(workspace.current?.jobIds()||[]);let inventory=authenticated?inventoryRef.current:{devices:[]}
+      if(authenticated&&(!inventory||inventory.error))try{inventory=await api.devices()}catch(error){inventory={devices:[],error:problem(error)}}
+      stateRef.current=next;inventoryRef.current=authenticated?inventory:undefined;setState(next);setLoading(false);setSubmitError(current=>['SERVICE_UNAVAILABLE','INTERFACE_UNAVAILABLE'].includes(current?.code)?undefined:current);acknowledge(next)
       workspace.current?.update(next,inventory,inventory.error);return next
     }catch(error){setLoading(false);setSubmitError(current=>current||problem(error));workspace.current?.update(stateRef.current,inventoryRef.current,{code:'SERVICE_UNAVAILABLE'});return undefined}
     finally{polling.current=undefined}})()
     polling.current=request;return request
-  },[acknowledge])
+  },[acknowledge,authenticated])
+  pollRef.current=poll
 
-  useEffect(()=>{workspace.current=mountWorkspace({document,i18n:i18n.current,storage:storage(),fetch,onChange:poll});poll();const timer=setInterval(poll,1500);return()=>clearInterval(timer)},[poll])
+  useEffect(()=>{workspace.current=mountWorkspace({document,i18n:i18n.current,storage:storage(),fetch,onChange:()=>pollRef.current?.()})},[])
+  useEffect(()=>{if(authenticated===undefined)return;poll();const timer=setInterval(poll,1500);return()=>clearInterval(timer)},[poll,authenticated])
   useEffect(()=>{workspace.current?.render()},[language,catalog])
 
   const messages=useMemo<ChatMessage[]>(()=>state?.turns.flatMap(turn=>{

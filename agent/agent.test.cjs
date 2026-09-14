@@ -211,7 +211,7 @@ test('resident response validation and HTTP timeout are distinct from device-off
 test('challenge state returns only the normal page and never image or code fields', async t => {
   const { client } = await setup(t);
   await client.session();
-  client.fetch = async () => Response.json({ authenticated: false, phase: 'captcha', busy: false, captcha: 'private-image',
+  client.fetch = async () => Response.json({ authenticated: false, phase: 'captcha', busy: false, captcha: 'private-image', residentEpoch: 'fixture-resident',
     loginUrl: '/api/v1/session/login', verificationUrl: '/api/v1/session/verify', logoutUrl: '/api/v1/session/logout' });
   const result = await client.session();
   assert.equal(result.phase, 'captcha'); assert.equal(result.loginPage, client.baseUrl + '/');

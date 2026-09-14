@@ -58,7 +58,7 @@ function installV1Routes(server, session, options) {
   const drained = [];
   const release = () => { if (--pending === 0) for (const resolve of drained.splice(0)) resolve(); };
   const ranges = new Set();
-  const playback = new PlaybackSessions({ session, createConnection: options.playback?.createConnection,
+  const playback = new PlaybackSessions({ ...options.playback, session,
     resolveDevice: async serial => { const { devices, discovery } = await inventory(); return findDevice(devices, serial, discovery); } });
   const live = new LiveSessions({ ...options.live, session,
     resolveDevice: async serial => { const { devices, discovery } = await inventory(); return findDevice(devices, serial, discovery); } });
@@ -91,7 +91,8 @@ function installV1Routes(server, session, options) {
       if (route === '/api/v1/session' && req.method === 'GET') return send(200, {
         authenticated: cloudAuthenticated(), phase: session.state.phase,
         captcha: session.state.phase === 'captcha' ? session.state.captcha : null,
-        busy: Boolean(options.isBusy() || active()), loginUrl: '/api/v1/session/login', verificationUrl: '/api/v1/session/verify', logoutUrl: '/api/v1/session/logout',
+        busy: Boolean(options.isBusy() || active()), residentEpoch: playback.residentEpoch,
+        loginUrl: '/api/v1/session/login', verificationUrl: '/api/v1/session/verify', logoutUrl: '/api/v1/session/logout',
       });
       if (stopping) throw fault(503, 'SERVICE_STOPPING', 'The resident service is shutting down.');
       if (route === '/api/v1/jobs' && req.method === 'GET') {
@@ -137,23 +138,37 @@ function installV1Routes(server, session, options) {
         const data = await body(req, origin, 'playbackStart');
         requireCloudSession();
         if (stopping) throw fault(503, 'SERVICE_STOPPING', 'The resident service is shutting down.');
-        if (options.isBusy() || active() || rangeBusy) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
+        const reused = data.media === true && playback.hasRequest(data.requestId);
+        if (!reused && (options.isBusy() || active() || rangeBusy)) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
         const window = windowOf(data);
         pending++;
-        try { return send(201, { playback: await playback.start({ serial: data.serial, speed: data.speed,
-          begin: Date.parse(window.normalized.start) / 1000, end: Date.parse(window.normalized.end) / 1000 }) }); }
+        try { return send(reused ? 200 : 201, { playback: await playback.start({ serial: data.serial, speed: data.speed,
+          media: data.media, requestId: data.requestId, residentEpoch: data.residentEpoch, requestWindow: window,
+          begin: Date.parse(window.normalized.start) / 1000, end: Date.parse(window.normalized.end) / 1000 }), reused }); }
         finally { release(); }
       }
-      const playbackMatch = /^\/api\/v1\/playback-sessions\/([^/]+)(?:\/(pause|resume|close))?$/.exec(route);
+      const playbackRequest = /^\/api\/v1\/playback-requests\/([^/]+)$/.exec(route);
+      if (playbackRequest && req.method === 'GET') {
+        const entries = [...requestUrl.searchParams.entries()];
+        if (entries.length !== 1 || entries[0][0] !== 'residentEpoch') throw fault(400, 'INVALID_REQUEST', 'residentEpoch is required once.');
+        return send(200, { request: playback.getRequest(decodeURIComponent(playbackRequest[1]), entries[0][1]) });
+      }
+      const playbackMatch = /^\/api\/v1\/playback-sessions\/([^/]+)(?:\/(pause|resume|close|seek|media))?$/.exec(route);
       if (playbackMatch) {
         const id = decodeURIComponent(playbackMatch[1]), action = playbackMatch[2];
         if (req.method === 'GET' && !action) return send(200, { playback: playback.get(id) });
-        if (req.method === 'POST' && action) {
-          await body(req, origin, 'empty');
+        if (req.method === 'GET' && action === 'media') return await playback.attach(id, res);
+        if (req.method === 'POST' && action && action !== 'media') {
+          const data = await body(req, origin, action === 'seek' ? 'playbackSeek' : 'empty');
           if (stopping) throw fault(503, 'SERVICE_STOPPING', 'The resident service is shutting down.');
           if (options.isBusy()) throw fault(409, 'SERVICE_BUSY', 'A recording or login operation is active.');
           pending++;
-          try { return send(200, { playback: await playback[action](id) }); } finally { release(); }
+          try {
+            if (action !== 'seek') return send(200, { playback: await playback[action](id) });
+            const window = windowOf(data);
+            return send(201, { playback: await playback.seek(id, { requestId: data.requestId, residentEpoch: data.residentEpoch,
+              requestWindow: window, begin: Date.parse(window.normalized.start) / 1000, end: Date.parse(window.normalized.end) / 1000 }) });
+          } finally { release(); }
         }
       }
       const match = /^\/api\/v1\/devices(?:\/([^/]+)(?:\/(recording-ranges)|\/capabilities\/([^/]+))?)?$/.exec(route);

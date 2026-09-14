@@ -57,3 +57,11 @@ test('catalogs have matching keys/placeholders and all static page labels are tr
     }
   }
 });
+
+test('every stable historical playback failure has English and Chinese UI copy', () => {
+  const { statuses } = require('../../capabilities/recordings/playback-session.cjs');
+  for (const locale of ['en', 'zh-CN']) {
+    const catalog = JSON.parse(fs.readFileSync(path.join(__dirname, `ui.${locale}.json`), 'utf8'));
+    for (const code of Object.keys(statuses)) assert.equal(typeof catalog[`ui.error.${code}`], 'string', `${locale} ${code}`);
+  }
+});

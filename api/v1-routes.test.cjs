@@ -25,6 +25,11 @@ function check(name, value) {
 }
 const request = { requestId: 'first', serial: 'camera', day: '2026-08-27', start: '16:30', end: '16:31', timezone: 'America/Toronto' };
 const begin = 1787862600, end = begin + 60;
+test('published session response requires the resident restart epoch', () => {
+  const validate = ajv.getSchema(`${contract.$id}#/definitions/session`), value = { authenticated: false, phase: 'idle', captcha: null, busy: false,
+    loginUrl: '/api/v1/session/login', verificationUrl: '/api/v1/session/verify', logoutUrl: '/api/v1/session/logout' };
+  assert.equal(validate(value), false); assert.equal(validate({ ...value, residentEpoch: 'fixture-resident' }), true);
+});
 const inventory = () => [
   { device_sn: 'base', device_model: 'T8030', device_type: DeviceType.HB3, device_name: 'HomeBase', local_ip: '192.0.2.1' },
   { device_sn: 'camera', device_model: 'T8600', device_type: DeviceType.PROFESSIONAL_247, device_name: 'Drive Way', parent_sn: 'base', device_channel: 0 },
@@ -229,7 +234,12 @@ function playbackFixture() {
     queueMicrotask(() => {
       p.emit('command', { command_type: 6001, channel: 0, return_code: 0, customData });
       if (cmd === 0 || cmd === 2) {
-        p.emit('continuous playback frame', { kind: 'video', channel: 0, timestamp: begin * 1000 + (cmd === 0 ? 1000 : 2000) });
+        if (cmd === 0) {
+          const { PassThrough } = require('node:stream');
+          p.emit('livestream started', 0, { videoCodec: 0 }, new PassThrough(), new PassThrough());
+        }
+        p.emit('continuous playback frame', { kind: 'video', channel: 0, timestamp: begin * 1000 + (cmd === 0 ? 1000 : 2000),
+          keyFrame: true, data: Buffer.from(cmd === 0 ? 'start-frame' : 'resume-frame') });
         p.currentMessageState[1].p2pStreamNotStarted = false;
       }
     });
@@ -237,6 +247,7 @@ function playbackFixture() {
   let created = 0, closed = false, closeGate;
   p.close = async () => { await closeGate; clearTimeout(p.currentMessageState[1].p2pStreamingTimeout); p.connected = false; p.continuousPlayback = undefined; closed = true; p.emit('close'); };
   return { commands, p, created: () => created, closed: () => closed, delayClose: gate => { closeGate = gate; },
+    frame: (timestamp, data = Buffer.from('frame')) => p.emit('continuous playback frame', { kind: 'video', channel: 0, timestamp, keyFrame: true, data }),
     createConnection: () => { created++; return { connect: async () => {}, close: async () => {}, userId: 'private-fixture-account',
       station: { p2pSession: p, getSerial: () => 'base', getModel: () => 'T8030' },
       camera: { getSerial: () => 'camera', getModel: () => 'T8600', getStationSerial: () => 'base', getChannel: () => 0 } }; } };
@@ -248,6 +259,7 @@ async function enablePlayback(f) {
     controls: { pauseResumeAtSpeed1: true, verifiedStartSpeeds: [1, 2, 4, 16] } });
 }
 const playbackInput = () => { const { requestId, ...input } = request; return { ...input, speed: 1 }; };
+const requestWindow = () => { const { requestId: _requestId, serial: _serial, ...window } = request; return window; };
 
 test('production playback HTTP requires durable scoped controls and returns the same owner across opaque session actions', async t => {
   const p = playbackFixture(), f = await fixture(t, { playback: { createConnection: p.createConnection } }); await f.login();
@@ -271,6 +283,123 @@ test('production playback HTTP requires durable scoped controls and returns the 
   }
   assert.deepEqual(p.commands, [0, 1, 2, 3]); assert.equal(p.created(), 1); assert.equal(p.closed(), true);
   assert.equal((await f.json('/api/v1/session')).value.busy, false);
+});
+
+test('media playback HTTP exposes resident/request identity and immutable multipart frame headers', async t => {
+  const p = playbackFixture(); let decoders = 0;
+  const f = await fixture(t, { playback: { createConnection: p.createConnection,
+    createDecoder: ({ video, onFrame }) => { decoders++; video.once('data', () => onFrame(Buffer.from([255,216,1,255,217]))); return { close: async () => {} }; } } });
+  await f.login(); await enablePlayback(f);
+  const epoch = (await f.json('/api/v1/session', undefined, 'session')).value.residentEpoch;
+  const input = { ...playbackInput(), media: true, requestId: 'browser-playback', residentEpoch: epoch };
+  const opened = await f.json('/api/v1/playback-sessions', input, 'playbackResponse');
+  assert.equal(opened.status, 201); assert.equal(opened.value.playback.media.timestampSemantics, 'source-received-position');
+  assert.ok(opened.value.playback.media.firstFrameLatencyMs >= 0);
+  assert.equal(opened.value.playback.media.sourceReceivedPositionMs, Date.parse('2026-08-27T16:30:00-04:00') + 1000);
+  const recovered = await f.json(`/api/v1/playback-requests/${input.requestId}?residentEpoch=${encodeURIComponent(epoch)}`, undefined, 'playbackRequestResponse');
+  assert.equal(recovered.value.request.sessionId, opened.value.playback.sessionId);
+  const response = await fetch(f.origin + opened.value.playback.media.url), reader = response.body.getReader();
+  const part = Buffer.from((await reader.read()).value).toString('latin1');
+  assert.match(part, /X-Playback-Request-Id: browser-playback\r\n/);
+  assert.match(part, /X-Playback-Media-Epoch: 1\r\n/); assert.match(part, /X-Playback-Frame-Sequence: 1\r\n/);
+  assert.match(part, /X-Playback-Source-Received-Ms: \d+\r\n/);
+  assert.equal((await f.json(opened.value.playback.media.url)).value.error.code, 'PLAYBACK_CLIENT_CONFLICT');
+  await f.json(`/api/v1/playback-sessions/${opened.value.playback.sessionId}/pause`, {}, 'playbackResponse');
+  const resumed = await f.json(`/api/v1/playback-sessions/${opened.value.playback.sessionId}/resume`, {}, 'playbackResponse');
+  assert.equal(resumed.value.playback.media.mediaEpoch, 3); assert.equal(decoders, 2);
+  await reader.cancel();
+  await f.json(`/api/v1/playback-sessions/${opened.value.playback.sessionId}/close`, {}, 'playbackResponse');
+});
+
+test('media playback HTTP exposes a schema-valid opening view before device resolution', async t => {
+  const p = playbackFixture(), f = await fixture(t, { playback: { createConnection: p.createConnection,
+    createDecoder: ({ video, onFrame }) => { video.once('data', () => onFrame(Buffer.from([255,216,1,255,217]))); return { close: async () => {} }; } } });
+  await f.login(); await enablePlayback(f);
+  const residentEpoch = (await f.json('/api/v1/session', undefined, 'session')).value.residentEpoch;
+  let release; const gate = new Promise(resolve => { release = resolve; });
+  f.api.getDevsListDecrypted = async () => { await gate; return { devices: f.raw }; };
+  const input = { ...playbackInput(), media: true, requestId: 'opening-media', residentEpoch };
+  const creating = f.json('/api/v1/playback-sessions', input, 'playbackResponse');
+  let requestView;
+  for (let attempt = 0; attempt < 100 && !requestView; attempt++) {
+    const result = await f.json(`/api/v1/playback-requests/${input.requestId}?residentEpoch=${residentEpoch}`, undefined, 'playbackRequestResponse');
+    if (result.status === 200) requestView = result.value.request; else await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  assert.equal(requestView.state, 'pending');
+  const opening = (await f.json(`/api/v1/playback-sessions/${requestView.sessionId}`, undefined, 'playbackResponse')).value.playback;
+  release(); const opened = await creating; await f.json(`/api/v1/playback-sessions/${opened.value.playback.sessionId}/close`, {}, 'playbackResponse');
+  assert.equal(opening.state, 'opening'); assert.equal(opening.requestId, input.requestId); assert.equal(opening.residentEpoch, residentEpoch);
+  assert.deepEqual(opening.verificationScope, { serial: 'camera', model: null, firmware: { main: null, secondary: null }, homeBase: null, channel: null });
+  assert.deepEqual(opening.verifiedStartSpeeds, []); assert.deepEqual(opening.allowedOperations, ['close']);
+  assert.equal('media' in opening, false); assert.equal(opening.cleanupComplete, false); assert.deepEqual(opening.window.input, requestWindow());
+});
+
+test('media playback HTTP retains schema-valid request and session views across initialization failures', async t => {
+  const cases = [
+    { name: 'resolver reject', code: 'DEVICE_NOT_FOUND', prepare: f => { f.api.getDevsListDecrypted = async () => ({ devices: f.raw.filter(row => row.device_sn !== 'camera') }); } },
+    { name: 'resolver timeout', code: 'CONTROL_STARTUP_TIMEOUT', playback: { startupMs: 5 }, prepare: f => { f.api.getDevsListDecrypted = async () => new Promise(() => {}); } },
+    { name: 'connection fail', code: 'CONTROL_CONNECTION_LOST', connection: 'reject' },
+    { name: 'no recording', code: 'PLAYBACK_NO_RECORDING', prepare: (_f, p) => { p.p.queryContinuousRecordings = (_serial, channel, start, stop) => queueMicrotask(() => p.p.emit('continuous recording ranges', channel, { begin_time: start, end_time: stop, videos: [] })); } },
+    { name: 'decoder before lease', code: 'PLAYBACK_RUNTIME_UNAVAILABLE', playback: { startupMs: 5, createDecoder: () => { throw Object.assign(new Error('private runtime detail'), { code: 'LIVE_RUNTIME_UNAVAILABLE' }); } } },
+  ];
+  for (const item of cases) await t.test(item.name, async t => {
+    const p = playbackFixture(), baseConnection = p.createConnection;
+    const createConnection = item.connection === 'reject' ? () => { const connection = baseConnection(); connection.connect = async () => { throw new Error('private connect detail'); }; return connection; } : baseConnection;
+    const f = await fixture(t, { playback: { createConnection, ...item.playback } }); await f.login(); await enablePlayback(f); item.prepare?.(f, p);
+    const residentEpoch = (await f.json('/api/v1/session', undefined, 'session')).value.residentEpoch;
+    const input = { ...playbackInput(), media: true, requestId: `failed-${item.name.replaceAll(' ', '-')}`, residentEpoch };
+    const created = await f.json('/api/v1/playback-sessions', input); assert.equal(created.value.error.code, item.code);
+    const requestView = await f.json(`/api/v1/playback-requests/${input.requestId}?residentEpoch=${residentEpoch}`, undefined, 'playbackRequestResponse');
+    assert.equal(requestView.value.request.state, 'failed'); assert.equal(requestView.value.request.error.code, item.code); assert.ok(requestView.value.request.sessionId);
+    const sessionView = await f.json(`/api/v1/playback-sessions/${requestView.value.request.sessionId}`, undefined, 'playbackResponse');
+    const playback = sessionView.value.playback;
+    assert.equal(playback.requestId, input.requestId); assert.equal(playback.residentEpoch, residentEpoch); assert.equal(playback.verificationScope.serial, input.serial);
+    assert.deepEqual(playback.window.input, requestWindow()); assert.equal(playback.error.code, item.code); assert.equal('media' in playback, false);
+    assert.equal(playback.cleanupComplete, true); assert.equal((await f.json('/api/v1/session', undefined, 'session')).value.busy, false);
+    assert.ok(Object.values(playback.resources).every(Boolean));
+  });
+});
+
+test('media playback HTTP keeps a schema-valid busy view while early cleanup is unconfirmed', async t => {
+  const p = playbackFixture(); let release; const closeGate = new Promise(resolve => { release = resolve; });
+  const f = await fixture(t, { playback: { createConnection: p.createConnection, startupMs: 5, cleanupMs: 1000,
+    createDecoder: ({ video }) => { video.resume(); return { close: async () => { await closeGate; } }; } } });
+  await f.login(); await enablePlayback(f); const residentEpoch = (await f.json('/api/v1/session', undefined, 'session')).value.residentEpoch;
+  const input = { ...playbackInput(), media: true, requestId: 'pending-early-cleanup', residentEpoch }, creating = f.json('/api/v1/playback-sessions', input);
+  let requestView, sessionView;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    requestView = await f.json(`/api/v1/playback-requests/${input.requestId}?residentEpoch=${residentEpoch}`, undefined, 'playbackRequestResponse');
+    if (requestView.status === 200 && requestView.value.request.sessionId) {
+      sessionView = await f.json(`/api/v1/playback-sessions/${requestView.value.request.sessionId}`, undefined, 'playbackResponse');
+      if (sessionView.value.playback.error) break;
+    }
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  assert.equal(requestView.value.request.state, 'pending'); assert.equal(requestView.value.request.cleanupComplete, false);
+  assert.equal(sessionView.value.playback.error.code, 'PLAYBACK_MEDIA_TIMEOUT'); assert.equal(sessionView.value.playback.cleanupComplete, false);
+  assert.equal(sessionView.value.playback.resources.decoderClosed, false); assert.equal('media' in sessionView.value.playback, false);
+  assert.equal((await f.json('/api/v1/session', undefined, 'session')).value.busy, true);
+  release(); const failed = await creating; assert.equal(failed.value.error.code, 'PLAYBACK_MEDIA_TIMEOUT');
+  assert.equal((await f.json(`/api/v1/playback-sessions/${requestView.value.request.sessionId}`, undefined, 'playbackResponse')).value.playback.cleanupComplete, true);
+});
+
+test('media playback bounds an actual HTTP client that stops reading', async t => {
+  const p = playbackFixture(), jpeg = Buffer.alloc(900000, 1); jpeg[0] = 255; jpeg[1] = 216; jpeg[jpeg.length - 2] = 255; jpeg[jpeg.length - 1] = 217;
+  const f = await fixture(t, { playback: { createConnection: p.createConnection, mediaIdleMs: 20000,
+    createDecoder: ({ video, onFrame }) => { video.on('data', () => onFrame(jpeg)); return { close: async () => {} }; } } });
+  await f.login(); await enablePlayback(f);
+  const residentEpoch = (await f.json('/api/v1/session', undefined, 'session')).value.residentEpoch;
+  const opened = await f.json('/api/v1/playback-sessions', { ...playbackInput(), media: true, requestId: 'slow-http', residentEpoch }, 'playbackResponse');
+  let response; const request = http.get(f.origin + opened.value.playback.media.url, value => { response = value; value.pause(); });
+  t.after(() => { request.destroy(); response?.destroy(); });
+  for (let count = 0; count < 100 && !response; count++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(response, 'the media response must attach');
+  const begin = Date.parse('2026-08-27T16:30:00-04:00');
+  for (let count = 0; count < 100; count++) p.frame(begin + 2000 + count, Buffer.from([count]));
+  await new Promise(resolve => setTimeout(resolve, 5500));
+  const status = await f.json(`/api/v1/playback-sessions/${opened.value.playback.sessionId}`, undefined, 'playbackResponse');
+  assert.equal(status.value.playback.error.code, 'PLAYBACK_MEDIA_SLOW_CLIENT');
+  assert.equal(status.value.playback.cleanupComplete, true);
 });
 
 for (const action of ['logout', 'shutdown']) test(`production playback ${action} waits for dedicated cleanup before releasing the cloud session`, async t => {
