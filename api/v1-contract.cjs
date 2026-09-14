@@ -19,6 +19,9 @@ const errorCodes = ['UNAUTHENTICATED', 'UNSUPPORTED_DEVICE', 'DEVICE_UNAVAILABLE
   'PLAYBACK_SESSION_NOT_FOUND', 'CONTROL_NOT_VERIFIED', 'CONTROL_INACTIVE', 'CONTROL_SCOPE_CHANGED', 'CONTROL_CONTEXT_UNAVAILABLE',
   'CONTROL_CONNECTION_LOST', 'CONTROL_REJECTED', 'CONTROL_RESPONSE_INVALID', 'CONTROL_SEND_FAILED', 'CONTROL_TIMEOUT',
   'CONTROL_STARTUP_TIMEOUT', 'CONTROL_MEDIA_TIMEOUT', 'CONTROL_CLEANUP_FAILED', 'PAUSE_MEDIA_ADVANCED',
+  'PLAYBACK_REQUEST_NOT_FOUND', 'PLAYBACK_REQUEST_CONFLICT', 'PLAYBACK_REQUEST_EXPIRED', 'PLAYBACK_STALE_SESSION',
+  'PLAYBACK_CLIENT_CONFLICT', 'PLAYBACK_NO_RECORDING', 'PLAYBACK_MEDIA_UNAVAILABLE', 'PLAYBACK_MEDIA_TIMEOUT',
+  'PLAYBACK_MEDIA_SLOW_CLIENT', 'PLAYBACK_DECODER_FAILED', 'PLAYBACK_RUNTIME_UNAVAILABLE',
   'LIVE_SESSION_NOT_FOUND', 'LIVE_REQUEST_CONFLICT', 'LIVE_CLIENT_CONFLICT', 'LIVE_UNSUPPORTED', 'LIVE_CAPABILITY_UNKNOWN',
   'LIVE_DEVICE_OFFLINE', 'LIVE_SCOPE_CHANGED', 'LIVE_CONNECTION_FAILED', 'LIVE_CONNECTION_LOST', 'LIVE_COMMAND_REJECTED',
   'LIVE_COMMAND_TIMEOUT', 'LIVE_MEDIA_TIMEOUT', 'LIVE_RUNTIME_UNAVAILABLE', 'LIVE_DECODER_FAILED', 'LIVE_CLEANUP_FAILED', 'LIVE_INACTIVE'];
@@ -54,17 +57,28 @@ const job = object({ jobId: string, requestId: string, homeBaseId: string, seria
   progress: { type: 'number', minimum: 0, maximum: 1 }, createdAt: string, updatedAt: string,
   result, artifacts: array(artifact), error: { anyOf: [error, { type: 'null' }] },
 });
-const playback = object({ sessionId: nonempty,
+const playbackProperties = { sessionId: nonempty,
   state: { enum: ['opening', 'playing', 'pausing', 'paused', 'resuming', 'closing', 'closed', 'failed'] },
   verificationScope: deviceSchemas.scope, speed: { enum: [1, 2, 4, 16] },
   positionMs: { type: ['integer', 'null'] }, pauseExpiresAtMs: { type: ['integer', 'null'] }, maxPauseMs: { const: 30000 },
   allowedOperations: array({ enum: ['pause', 'resume', 'close'] }), verifiedStartSpeeds: deviceSchemas.controls.properties.verifiedStartSpeeds,
-  stopConfirmed: { type: 'boolean' }, error: { anyOf: [error, { type: 'null' }] },
+  stopConfirmed: { type: 'boolean' }, cleanupComplete: { type: 'boolean' }, error: { anyOf: [error, { type: 'null' }] },
   operations: array(object({ operation: { enum: ['start', 'pause', 'resume', 'stop'] }, sentAtMs: { type: 'integer' },
     receivedAtMs: { type: ['integer', 'null'] }, returnCode: { type: ['integer', 'null'] } })),
   channelChecks: object(Object.fromEntries(['queryMatched', 'queryRejected', 'commandMatched', 'commandRejected', 'mediaMatched', 'mediaRejected']
     .map(name => [name, { type: 'integer', minimum: 0 }]))), channelIsolation: { const: 'unverified' },
-});
+  requestId: nonempty, residentEpoch: nonempty, window,
+  resources: object(Object.fromEntries(['protocolClosed', 'connectionClosed', 'decoderClosed', 'streamsClosed'].map(name => [name, { type: 'boolean' }]))),
+  media: object({ url: nonempty, contentType: { const: 'multipart/x-mixed-replace; boundary=frame' },
+    timestampSemantics: { const: 'source-received-position' }, sourceReceivedPositionMs: { type: ['integer', 'null'] },
+    firstFrameLatencyMs: { type: ['integer', 'null'], minimum: 0 },
+    mediaEpoch: { type: 'integer', minimum: 1 }, frameSequence: { type: 'integer', minimum: 0 },
+    decodedFrames: { type: 'integer', minimum: 0 }, bytes: { type: 'integer', minimum: 0 }, connected: { type: 'boolean' },
+    audio: { const: false }, maxFps: { const: 5 }, maxWidth: { const: 960 }, expiresAtMs: { type: 'integer' } }),
+};
+const playbackRequired = ['sessionId', 'state', 'verificationScope', 'speed', 'positionMs', 'pauseExpiresAtMs', 'maxPauseMs',
+  'allowedOperations', 'verifiedStartSpeeds', 'stopConfirmed', 'cleanupComplete', 'error', 'operations', 'channelChecks', 'channelIsolation'];
+const playback = object(playbackProperties, playbackRequired);
 const contract = {
   $schema: 'http://json-schema.org/draft-07/schema#', $id: 'urn:eufy-agent-hub:api:v1',
   title: 'Eufy resident recording API v1',
@@ -79,8 +93,13 @@ const contract = {
       state: { enum: ['queued', 'running', 'succeeded', 'failed', 'cancelled'] }, serial: nonempty }, []),
     window: object(time, ['day', 'start', 'end']),
     export: object({ requestId: nonempty, serial: nonempty, ...time }, ['requestId', 'serial', 'day', 'start', 'end']),
-    playbackStart: object({ serial: nonempty, ...time, speed: { type: 'number' } }, ['serial', 'day', 'start', 'end']),
-    playbackResponse: object({ playback }),
+    playbackStart: object({ serial: nonempty, ...time, speed: { type: 'number' }, media: { type: 'boolean' }, requestId: nonempty, residentEpoch: nonempty }, ['serial', 'day', 'start', 'end']),
+    playbackSeek: object({ requestId: nonempty, residentEpoch: nonempty, ...time }, ['requestId', 'residentEpoch', 'day', 'start', 'end']),
+    playbackResponse: object({ playback, reused: { type: 'boolean' } }, ['playback']),
+    playbackRequest: object({ requestId: nonempty, residentEpoch: nonempty, operation: { enum: ['create', 'seek'] },
+      state: { enum: ['pending', 'succeeded', 'failed'] }, fromSessionId: nullableString, sessionId: nullableString,
+      cleanupComplete: { type: 'boolean' }, error: { anyOf: [error, { type: 'null' }] } }),
+    playbackRequestResponse: object({ request: { $ref: '#/definitions/playbackRequest' } }),
     liveStart: object({ serial: nonempty, requestId: nonempty, maxDurationMs: { type: 'integer', minimum: 1000, maximum: 60000 } }, ['serial', 'requestId']),
     liveResponse: object({ live: { $ref: '#/definitions/live' }, reused: { type: 'boolean' } }, ['live']),
     live: object({ sessionId: nonempty, requestId: nonempty, serial: nonempty,
@@ -98,7 +117,8 @@ const contract = {
     }),
     normalizedWindow: window, device, discovery, artifact, job,
     error: object({ error, discovery }, ['error']),
-    session: object({ authenticated: { type: 'boolean' }, phase: string, captcha: nullableString, busy: { type: 'boolean' }, loginUrl: { const: '/api/v1/session/login' }, verificationUrl: { const: '/api/v1/session/verify' }, logoutUrl: { const: '/api/v1/session/logout' } }),
+    session: object({ authenticated: { type: 'boolean' }, phase: string, captcha: nullableString, busy: { type: 'boolean' }, residentEpoch: nonempty, loginUrl: { const: '/api/v1/session/login' }, verificationUrl: { const: '/api/v1/session/verify' }, logoutUrl: { const: '/api/v1/session/logout' } },
+      ['authenticated', 'phase', 'captcha', 'busy', 'residentEpoch', 'loginUrl', 'verificationUrl', 'logoutUrl']),
     devices: object({ devices: array(device), discovery }), deviceResponse: object({ device, discovery }),
     capabilityResponse: object({ serial: string, capability: string, ...deviceSchemas.capability.properties,
       verificationScope: deviceSchemas.scope, discovery }, ['serial', 'capability', 'status', 'reason', 'evidence', 'verificationScope', 'discovery']),
@@ -111,7 +131,7 @@ const contract = {
 };
 const ajv = new Ajv({ strict: false });
 ajv.addSchema(contract);
-const validators = Object.fromEntries(['identity', 'retry', 'jobListQuery', 'window', 'export', 'playbackStart', 'liveStart', 'login', 'verification', 'empty'].map(name =>
+const validators = Object.fromEntries(['identity', 'retry', 'jobListQuery', 'window', 'export', 'playbackStart', 'playbackSeek', 'liveStart', 'login', 'verification', 'empty'].map(name =>
   [name, ajv.getSchema(`${contract.$id}#/definitions/${name}`)]));
 function validateRequest(name, data) {
   const validate = validators[name];
