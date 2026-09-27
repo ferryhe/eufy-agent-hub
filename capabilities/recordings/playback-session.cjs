@@ -185,12 +185,21 @@ class PlaybackSessions {
       return;
     }
     c.waitingDrain = true;
-    const accepted = c.client.write(part, error => {
+    let accepted = true, writeComplete = false, drained = true;
+    const advance = () => {
+      if (!writeComplete || !drained || c.cleanup) return;
       c.waitingDrain = false; clearTimeout(c.slowTimer); c.slowTimer = null;
-      if (error) return this._end(c, failure('PLAYBACK_MEDIA_SLOW_CLIENT'));
       const latest = c.pendingFrame; c.pendingFrame = null; this._writeFrame(c, latest);
+    };
+    accepted = c.client.write(part, error => {
+      if (error) return this._end(c, failure('PLAYBACK_MEDIA_SLOW_CLIENT'));
+      writeComplete = true; if (accepted) drained = true; advance();
     });
-    if (!accepted) c.slowTimer ||= setTimeout(() => this._end(c, failure('PLAYBACK_MEDIA_SLOW_CLIENT')), 5000);
+    if (!accepted) {
+      drained = false;
+      c.slowTimer ||= setTimeout(() => this._end(c, failure('PLAYBACK_MEDIA_SLOW_CLIENT')), 5000);
+      c.client.once('drain', () => { drained = true; advance(); });
+    }
   }
   async attach(id, response) {
     const c = this._find(id); if (!c.media) throw failure('PLAYBACK_MEDIA_UNAVAILABLE');

@@ -1,10 +1,10 @@
 # Auth and devices issue drafts
 
-The following gaps were identified during migration; they are not implemented features. These drafts were intended for repository maintainers to deduplicate against other module tasks before creating remote issues. See the [issue index](README.md) for the created work items.
+These are historical issue drafts, not a description of the current implementation. Session persistence and restart recovery were delivered before the React migration; current behavior is documented in [`capabilities/auth/README.md`](../../capabilities/auth/README.md). See the [issue index](README.md) for the issue history.
 
 ## [auth] Session lifecycle and restart recovery for the persistent service
 
-**Existing evidence:** Single-account login, email/image verification challenges and expiration detection are implemented, with six offline tests. Sessions exist only in memory, and expiration requires a new login.
+**Current evidence:** Single-account login, email/image verification challenges, durable session save/restore and expiration detection are implemented (PR #23). Saved sessions default to ignored `output/auth/session.json`; expired or unusable sessions require a normal login because the provider has no supported token-refresh method. The optional in-memory mode applies only when an embedded caller omits `sessionPath`.
 
 **Scope:** Provide shared session status, logout and restart recovery for the CLI, API and background jobs. Verify whether Mega permits session recovery or refresh; enter an explicit login-required state when recovery is unavailable. Continue supporting a single account by default, without introducing a multi-account architecture.
 

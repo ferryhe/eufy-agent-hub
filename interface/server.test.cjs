@@ -27,6 +27,8 @@ test('local HTTP server serves the migrated page on its configured port without 
   const origin = `http://127.0.0.1:${server.address().port}`;
   const page = await fetch(origin);
   assert.equal(page.status, 200); assert.match(await page.text(), /data-i18n="ui.title"/);
+  const legacy = await fetch(origin + '/legacy/');
+  assert.equal(legacy.status, 200); assert.match(await legacy.text(), /data-i18n="ui.title"/);
   for (const script of ['i18n.mjs', 'local-login.mjs', 'results.mjs', 'sidebar.mjs', 'workspace.mjs', 'contract.mjs']) {
     const response = await fetch(origin + '/assets/' + script);
     assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /javascript/);

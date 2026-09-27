@@ -126,14 +126,14 @@ function capabilityObservation(scope, capability, status = 'verified') {
     evidence: [{ source: 'offline-api-fixture', observedAt: '2026-09-11', outcome: 'partial' }] };
 }
 
-function liveFixture() {
+function liveFixture({ rejectStart = false, decoderCloseFailures = 0 } = {}) {
   const { PassThrough } = require('node:stream'), { CommandName } = require('../adapters/eufy');
   const station = new EventEmitter(), calls = []; let connected = false;
   Object.assign(station, { p2pSession: { isConnected: () => connected, isCurrentlyStreaming: () => false },
     getSerial: () => 'base', getModel: () => 'T8030', isLiveStreaming: () => connected,
     startLivestream() {
       calls.push('start'); queueMicrotask(() => {
-        station.emit('command result', station, { channel: 0, customData: { command: { name: CommandName.DeviceStartLivestream } }, return_code: 0 });
+        station.emit('command result', station, { channel: 0, customData: { command: { name: CommandName.DeviceStartLivestream } }, return_code: rejectStart ? 7 : 0 });
         station.emit('livestream start', station, 0, { videoCodec: 0 }, new PassThrough(), new PassThrough());
       });
     },
@@ -143,7 +143,9 @@ function liveFixture() {
   return { calls, createConnection: () => ({ station,
     camera: { getSerial: () => 'camera', getStationSerial: () => 'base', getModel: () => 'T8600', getChannel: () => 0 },
     connect: async () => { calls.push('connect'); connected = true; }, close: async () => { calls.push('close'); connected = false; } }),
-  createDecoder: ({ onFrame }) => { queueMicrotask(() => onFrame(Buffer.from([255,216,0,255,217]))); return { close: async () => calls.push('decoder-close') }; } };
+  createDecoder: ({ onFrame }) => { queueMicrotask(() => onFrame(Buffer.from([255,216,0,255,217]))); return { close: async () => {
+    calls.push('decoder-close'); if (decoderCloseFailures > 0) { decoderCloseFailures--; throw new Error('private-decoder-close'); }
+  } }; } };
 }
 
 test('live v1 preserves DEVICE_NOT_FOUND through the rejecting inventory resolver', async t => {
@@ -152,6 +154,20 @@ test('live v1 preserves DEVICE_NOT_FOUND through the rejecting inventory resolve
   assert.equal(result.status, 404);
   assert.equal(result.value.error.code, 'DEVICE_NOT_FOUND');
   assert.deepEqual(live.calls, [], 'An absent device must not construct a media connection');
+});
+
+test('failed Live startup returns its uncleaned resident owner so the browser can retry cleanup', async t => {
+  const live = liveFixture({ rejectStart: true, decoderCloseFailures: 1 }), f = await fixture(t, { live }); await f.login();
+  const failed = await f.json('/api/v1/live-sessions', { requestId: 'live-start-cleanup', serial: 'camera' });
+  assert.equal(failed.status, 503); assert.equal(failed.value.error.code, 'LIVE_CLEANUP_FAILED');
+  check('liveResponse', { live: failed.value.live });
+  assert.equal(failed.value.live.cleanupComplete, false); assert.equal(failed.value.live.state, 'failed');
+  assert.equal((await f.json('/api/v1/session', undefined, 'session')).value.busy, true);
+  const recovered = await f.json(`/api/v1/live-sessions/${failed.value.live.sessionId}`, undefined, 'liveResponse');
+  assert.equal(recovered.value.live.cleanupComplete, false);
+  const stopped = await f.json(`/api/v1/live-sessions/${failed.value.live.sessionId}/stop`, {}, 'liveResponse');
+  assert.equal(stopped.status, 200); assert.equal(stopped.value.live.cleanupComplete, true);
+  assert.equal((await f.json('/api/v1/session', undefined, 'session')).value.busy, false);
 });
 
 test('live v1 identity, schema, media and duplicate-client conflicts use one stable resident owner', async t => {
@@ -178,8 +194,17 @@ test('live v1 identity, schema, media and duplicate-client conflicts use one sta
 
 test('live admission uses existing export, playback, range and auth guards, including split bodies', async t => {
   const live = liveFixture(), f = await fixture(t, { live }); await f.login();
+  f.raw.push(
+    { device_sn: 'base-other', device_model: 'T8030', device_type: DeviceType.HB3, device_name: 'Other HomeBase', local_ip: '192.0.2.2' },
+    { device_sn: 'camera-other-base', device_model: 'T8600', device_type: DeviceType.PROFESSIONAL_247,
+      device_name: 'Other camera', parent_sn: 'base-other', device_channel: 0 },
+  );
+  const inventory = await f.json('/api/v1/devices', undefined, 'devices');
+  assert.equal(inventory.value.devices.find(device => device.serial === 'camera-other-base').homeBaseId, 'base-other');
   const delayed = await splitBody(f, '/api/v1/exports', request);
   const opened = await f.json('/api/v1/live-sessions', { requestId: 'live', serial: 'camera' }, 'liveResponse');
+  const otherHomeBase = await f.json('/api/v1/live-sessions', { requestId: 'live-other-base', serial: 'camera-other-base' });
+  assert.equal(otherHomeBase.status, 409); assert.equal(otherHomeBase.value.error.code, 'SERVICE_BUSY');
   for (const [route, data] of [['/api/v1/exports', request], ['/api/v1/playback-sessions', { serial: request.serial, day: request.day, start: request.start, end: request.end }],
     ['/api/v1/devices/camera/recording-ranges', { day: request.day, start: request.start, end: request.end }],
     ['/api/v1/session/refresh', {}], ['/recordings/query', { serial: 'camera', day: request.day }]]) {
@@ -395,8 +420,10 @@ test('media playback bounds an actual HTTP client that stops reading', async t =
   for (let count = 0; count < 100 && !response; count++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.ok(response, 'the media response must attach');
   const begin = Date.parse('2026-08-27T16:30:00-04:00');
-  for (let count = 0; count < 100; count++) p.frame(begin + 2000 + count, Buffer.from([count]));
+  let count = 0;
+  const feed = setInterval(() => p.frame(begin + 2000 + count++, Buffer.from([count & 255])), 20);
   await new Promise(resolve => setTimeout(resolve, 5500));
+  clearInterval(feed);
   const status = await f.json(`/api/v1/playback-sessions/${opened.value.playback.sessionId}`, undefined, 'playbackResponse');
   assert.equal(status.value.playback.error.code, 'PLAYBACK_MEDIA_SLOW_CLIENT');
   assert.equal(status.value.playback.cleanupComplete, true);

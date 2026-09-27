@@ -6,7 +6,7 @@
 
 A local eufy recording application with reusable capabilities, a resident HTTP API, a CLI, and an optional recording Agent. The browser provides event-recording browsing, an Agent sidebar, shared result components and a persistent workspace, with English and Simplified Chinese interfaces.
 
-**Phase 1 and Phase 2 delivery is merged through PR #32.** The original 15 issues (#1–#14 and #16) are closed as of 2026-09-13. Completion means their scoped acceptance criteria were met; it does not establish gap-free exports or support for every device. See [delivery history](#delivery-history) and [hardware evidence and limits](#hardware-evidence-and-limits).
+**Phase 1 and Phase 2 delivery is merged through PR #32.** The opt-in React migration through M1–M4 and M6 is merged in PRs #41–#45. M5/#40 adds bounded Live preview and owns the final default-route cutover; it remains in progress until fresh Live browser/hardware acceptance and the complete parity gate pass. `/` remains the legacy interface. The original 15 issues (#1–#14 and #16) are closed as of 2026-09-13. Completion means scoped acceptance criteria were met; it does not establish gap-free exports or support for every device. See [delivery history](#delivery-history) and [hardware evidence and limits](#hardware-evidence-and-limits).
 
 ### What is available, and where
 
@@ -16,13 +16,13 @@ A local eufy recording application with reusable capabilities, a resident HTTP A
 | Device discovery and capability matrix | Browser inventory, CLI, v1 devices API | Camera/HomeBase/channel/firmware scope; discovery completeness remains unknown |
 | Event search, download and saved MP4 playback | **Browse recordings**, legacy HTTP routes | An empty event index does not prove there is no continuous footage |
 | Continuous recording ranges and export | CLI, v1 API, recording Agent | Durable jobs, conversion and full decode/coverage checks; results can be partial |
-| Job recovery, cancellation and explicit retry | Resident job service; cancel/retry via v1 API | Interrupted capture is not resumed; no dedicated CLI cancel/retry commands or full browser task center |
-| Historical playback pause/resume | v1 playback-session control API | Accepted public hardware evidence is for 1× pause/resume; no browser media URL or playback-control UI |
-| Live video | v1 live-session API and MJPEG media URL | Video-only bounded preview; no dedicated Live page or CLI/Agent Live command |
+| Job recovery, cancellation and explicit retry | **`/app/jobs`**, resident job service, CLI and v1 API | Interrupted capture is not resumed; no dedicated CLI cancel/retry commands |
+| Historical browser playback | **`/app/recordings`**, v1 playback-session API | Bounded in-index preview with pause/resume and serialized seek; exact hardware evidence remains device/firmware scoped |
+| Live video | **`/app/live`** or v1 live-session API | On-demand, video-only, 1–60 seconds, up to 5 fps/960 px; the UI remains opt-in and its fresh hardware acceptance is pending |
 | Natural-language export | **Ask assistant** sidebar or terminal Agent | Requires model configuration; ordinary browsing does not |
 | Shared results and dynamic workspace | Both browser views | Device/timeline/job/player components; pin, reorder and restore references |
 
-The fixed event-search form has no direct continuous-export control. The Agent can submit continuous exports, and a workspace timeline backed by an Agent range receipt has an export action. The public [v1 contract](api/v1.md) and [legacy page routes](api/README.md) are separate interfaces.
+The fixed event-search form has no direct continuous-export control. The Agent can submit continuous exports, and a workspace timeline backed by an Agent range receipt has an export action. The public [v1 contract](api/v1.md) and [legacy page routes](api/README.md) are separate interfaces. React migration status and acceptance evidence are tracked in the [feature-parity checklist](docs/FEATURE_PARITY.md); the legacy root remains the rollback/default entry until the final M5 gate passes.
 
 ### Quick start
 
@@ -38,7 +38,9 @@ npm start
 
 `setup` installs the bundled protocol library's locked dependencies; `build` compiles its source and copies assets. Automated tests do not need a real account/HomeBase; optional media tests depend on local tool configuration.
 
-Open **http://127.0.0.1:3187/** for the legacy interface, or **http://127.0.0.1:3187/app/** for the opt-in React shell. On first use, sign in with your eufy account region (the tested account uses `CA`) and complete any image/email challenge. Keep the resident service running while using the page, CLI or Agent. The service listens on `127.0.0.1` only and checks the actual Host and browser Origin.
+Open **http://127.0.0.1:3187/** for the legacy interface, **http://127.0.0.1:3187/legacy/** for the transition fallback alias, or **http://127.0.0.1:3187/app/** for the opt-in React shell. Live preview is at `/app/live`; the React shell remains opt-in until the documented M5 gate passes. On first use, sign in with your eufy account region (the tested account uses `CA`) and complete any image/email challenge. Keep the resident service running while using the page, CLI or Agent. The service listens on `127.0.0.1` only and checks the actual Host and browser Origin.
+
+The Chromium integration suite is separate from `npm test`: run `npx playwright install --with-deps chromium` and then `npm run browser:test`.
 
 Completed login sessions are saved to ignored `output/auth/session.json` by default and validated on restart. **A normal restart does not always require another login.** Expired, malformed or unusable saved sessions do. Passwords and pending challenges are not saved. **Sign out** clears the saved session. `EUFY_SESSION_PATH` selects a private durable session-file location; treat that file as a credential. See [session lifecycle](capabilities/auth/README.md).
 
@@ -137,7 +139,7 @@ Evidence is for a **CA account, T8030 HomeBase 3 and specific T8600 cameras on t
 |---|---|---|
 | Continuous 20-minute export | A real 2026-08-27 16:30–16:50 Toronto export and a later Agent-to-hardware run produced playable, fully decodable media | **PARTIAL**: 51 video gaps over 250 ms, largest 4.067 s; no gap-free/lossless claim ([record](agent/VALIDATION.md)) |
 | Playback controls | Real 1× start, six-second stationary pause, resume progress and stop ([PR #31](https://github.com/ferryhe/eufy-agent-hub/pull/31)) | Accepted public scope authorizes speed 1; no verified public 2×/4×/8×/16× claim. Control API drains media; it provides no browser playback stream ([contract](capabilities/recordings/PLAYBACK_SESSIONS.md)) |
-| Live video | 2026-09-12 acceptance on one exact T8600/T8030 scope: 29 sampled frames fully decoded, confirmed stop, resource cleanup and same-HomeBase export conflict | Video-only MJPEG, up to 5 fps and 960 px wide, 1–60 s sessions; not continuous surveillance. Other devices/firmware, talkback and RTSP remain unverified ([record and lifecycle](capabilities/live/README.md)) |
+| Live video | The existing 2026-09-12 API acceptance covers one exact T8600/T8030 scope: 29 sampled frames fully decoded, confirmed stop, resource cleanup and same-HomeBase export conflict. Fresh acceptance of the new React Live route is pending. | Video-only MJPEG, up to 5 fps and 960 px wide, 1–60 s sessions; not continuous surveillance. Other devices/firmware, talkback and RTSP remain unverified ([record and lifecycle](capabilities/live/README.md)) |
 | Device discovery | Structured inventory, associations, capability evidence and explicit failure/retry state | Mega continuation remains unverified; successful discovery still reports `completeness: "unknown"` ([discovery contract](capabilities/devices/DISCOVERY.md)) |
 
 A protocol hint permits only the bounded operations allowed by that capability's contract. Unknown/unsupported Live refuses execution; playback controls require an exact persisted verified record. Installing this repository does not create private hardware evidence or automatically promote a device to verified. Event indexes, end frames, file existence and successful decoding alone do not establish continuous coverage. Video-content recognition is not implemented.
@@ -184,7 +186,7 @@ Based on the MIT-licensed [bropat/eufy-security-client](https://github.com/bropa
 
 本地运行的 eufy 录像应用，包含可复用能力、常驻 HTTP API、CLI 和可选的录像 Agent。浏览器已提供事件录像查询、Agent 侧栏、共享结果组件和可恢复工作区，支持英文和简体中文。
 
-**Phase 1、Phase 2 已交付，代码合并至 PR #32。** 截至 2026-09-13，原有 15 个 Issue（#1–#14、#16）均已关闭。这表示完成各项约定范围的验收，不代表已实现无缺口导出或验证所有设备。交付记录见下方，实机限制单独列明。
+**Phase 1、Phase 2 已交付，代码合并至 PR #32。** 可选 React 迁移的 M1–M4 和 M6 已在 PR #41–#45 合并。M5/#40 增加有限时长的 Live 预览，并负责最终默认入口切换；新 Live 浏览器/实机验收和完整对照门槛通过前仍在进行，`/` 保持旧版界面。原有 15 个 Issue（#1–#14、#16）截至 2026-09-13 均已关闭。这表示完成各项约定范围的验收，不代表已实现无缺口导出或验证所有设备。交付记录见下方，实机限制单独列明。
 
 ### 现在能做什么，从哪里操作
 
@@ -194,13 +196,13 @@ Based on the MIT-licensed [bropat/eufy-security-client](https://github.com/bropa
 | 设备发现与能力矩阵 | 页面设备列表、CLI、v1 设备 API | 按摄像头/HomeBase/通道/固件记录；设备发现完整性仍未知 |
 | 事件查询、下载、已保存 MP4 播放 | **浏览录像**及旧版 HTTP 路由 | 没有事件不等于没有连续录像 |
 | 连续录像范围查询与导出 | CLI、v1 API、录像 Agent | 持久化任务、转换、全片解码及覆盖校验；结果可能为 partial |
-| 任务恢复、取消、显式重试 | 常驻任务服务；取消/重试使用 v1 API | 中断捕获不能续传；CLI 尚无取消/重试子命令，页面尚无完整任务中心 |
-| 历史回放暂停/恢复 | v1 回放会话控制 API | 公开验收为 1× 暂停/恢复；没有浏览器媒体地址或回放控制页面 |
-| 实时视频 | v1 Live 会话 API 和 MJPEG 地址 | 有时限的纯视频预览；暂无专用 Live 页面或 CLI/Agent Live 命令 |
+| 任务恢复、取消、显式重试 | **`/app/jobs`**、常驻任务服务、CLI 和 v1 API | 中断捕获不能续传；CLI 尚无取消/重试子命令 |
+| 历史浏览器回放 | **`/app/recordings`**、v1 回放会话 API | 在索引范围内有限预览，支持暂停/恢复和串行跳转；实机证据仅适用于对应设备/固件范围 |
+| 实时视频 | **`/app/live`** 或 v1 Live 会话 API | 按需启动的纯视频预览，1–60 秒、最高 5 fps/960 像素；页面仍为可选入口，新实机验收尚待完成 |
 | 自然语言导出 | **询问助手**侧栏或终端 Agent | 需要配置模型；普通浏览不需要 |
 | 共享结果与动态工作区 | 两种页面模式 | 设备、时间轴、任务、播放器组件；支持固定、排序和引用恢复 |
 
-固定事件查询表单没有直接导出连续录像的按钮。Agent 可以提交连续导出；工作区中由 Agent 范围查询凭据生成的时间轴也提供导出操作。[v1 契约](api/v1.md)与[旧页面路由](api/README.md)是不同接口。
+固定事件查询表单没有直接导出连续录像的按钮。Agent 可以提交连续导出；工作区中由 Agent 范围查询凭据生成的时间轴也提供导出操作。[v1 契约](api/v1.md)与[旧页面路由](api/README.md)是不同接口。React 迁移状态和验收记录见[功能对照清单](docs/FEATURE_PARITY.md)；M5 最终门槛通过前，旧版根路径仍是默认入口和回退入口。
 
 ### 快速开始
 
@@ -216,7 +218,9 @@ npm start
 
 `setup` 按锁文件安装协议库依赖，`build` 编译协议库并复制资源。自动测试不需要真实账号/HomeBase；部分媒体测试需要配置本机工具。
 
-打开 **http://127.0.0.1:3187/** 使用旧界面，或打开 **http://127.0.0.1:3187/app/** 使用可选 React 界面；需要回退时重新打开 `/`。首次使用时填写账号所属地区（已测试账号为 `CA`），完成登录和可能出现的图片/邮件验证码。页面、CLI 和 Agent 使用期间保持常驻服务运行。服务仅监听 `127.0.0.1`，并检查实际 Host 和浏览器 Origin。
+打开 **http://127.0.0.1:3187/** 使用旧界面，打开 **http://127.0.0.1:3187/legacy/** 使用过渡回退别名，或打开 **http://127.0.0.1:3187/app/** 使用可选 React 界面。Live 预览入口为 `/app/live`；M5 验收门槛通过前，React 页面仍为可选入口。首次使用时填写账号所属地区（已测试账号为 `CA`），完成登录和可能出现的图片/邮件验证码。页面、CLI 和 Agent 使用期间保持常驻服务运行。服务仅监听 `127.0.0.1`，并检查实际 Host 和浏览器 Origin。
+
+Chromium 浏览器集成测试与 `npm test` 分开运行：先执行 `npx playwright install --with-deps chromium`，再执行 `npm run browser:test`。
 
 登录成功后，会话默认保存到不进入 Git 的 `output/auth/session.json`，重启时会验证并尝试恢复。**正常重启不一定需要重新登录。** 保存的会话过期、损坏或不可用时才需要重新登录。密码和未完成的验证码流程不会保存；**退出登录**会清除保存的会话。可通过 `EUFY_SESSION_PATH` 指定私有、持久的位置，该文件应按登录凭据保管。详见[会话生命周期](capabilities/auth/README.md)。
 
@@ -315,7 +319,7 @@ POST 使用 `Content-Type: application/json`；浏览器请求的 Origin 必须�
 |---|---|---|
 | 连续 20 分钟导出 | 2026-08-27 多伦多时间 16:30–16:50 的实机导出，以及后续 Agent 到实机流程，产出可播放且全片解码通过的视频 | **PARTIAL**：51 处超过 250 ms 的视频缺口，最大 4.067 秒；不声称无缺口或无损（[记录](agent/VALIDATION.md)） |
 | 历史回放控制 | 实机完成 1× 启动、6 秒静止暂停、恢复推进和停止（[PR #31](https://github.com/ferryhe/eufy-agent-hub/pull/31)） | 已接受的公开范围仅授权 speed 1；不声称 2×/4×/8×/16× 已公开验证。控制 API 消费媒体但不提供浏览器播放流（[契约](capabilities/recordings/PLAYBACK_SESSIONS.md)） |
-| 实时视频 | 2026-09-12 验收一个精确 T8600/T8030 范围：29 个采样帧全解码、确认停止、资源清理及同 HomeBase 导出冲突处理 | 纯视频 MJPEG，最高 5 fps、宽 960 px、会话 1–60 秒；不是持续监控。其他设备/固件、talkback、RTSP 未验证（[记录与生命周期](capabilities/live/README.md)） |
+| 实时视频 | 现有 2026-09-12 API 验收覆盖一个精确 T8600/T8030 范围：29 个采样帧全解码、确认停止、资源清理及同 HomeBase 导出冲突处理。新 React Live 页面的验收尚待完成。 | 纯视频 MJPEG，最高 5 fps、宽 960 px、会话 1–60 秒；不是持续监控。其他设备/固件、talkback、RTSP 未验证（[记录与生命周期](capabilities/live/README.md)） |
 | 设备发现 | 已提供结构化设备、关联、能力证据及明确的失败/重试状态 | Mega 后续分页未验证；成功查询仍报告 `completeness: "unknown"`（[发现契约](capabilities/devices/DISCOVERY.md)） |
 
 协议提示仅允许对应契约规定的有限尝试。Live 为 unknown/unsupported 时拒绝执行；回放控制要求精确匹配的持久化验证记录。安装仓库不会创建私人实机证据，也不会自动把设备提升为 verified。事件索引、结束帧、文件存在或解码成功，都不能单独证明连续录像完整。视频内容识别尚未实现。
