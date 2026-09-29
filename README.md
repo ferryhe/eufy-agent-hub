@@ -15,14 +15,14 @@ A local eufy recording application with reusable capabilities, a resident HTTP A
 | Login, verification, logout and session restoration | Browser, CLI, v1 session API | One resident account; expired or invalid saved sessions require login |
 | Device discovery and capability matrix | Browser inventory, CLI, v1 devices API | Camera/HomeBase/channel/firmware scope; discovery completeness remains unknown |
 | Event search, download and saved MP4 playback | **Browse recordings**, legacy HTTP routes | An empty event index does not prove there is no continuous footage |
-| Continuous recording ranges and export | CLI, v1 API, recording Agent | Durable jobs, conversion and full decode/coverage checks; results can be partial |
+| Continuous recording ranges and export | **Browse recordings** (`/app/recordings`), CLI, v1 API, recording Agent | Durable jobs, conversion and full decode/coverage checks; results can be partial |
 | Job recovery, cancellation and explicit retry | **`/app/jobs`**, resident job service, CLI and v1 API | Interrupted capture is not resumed; no dedicated CLI cancel/retry commands |
 | Historical browser playback | **`/app/recordings`**, v1 playback-session API | Bounded in-index preview with pause/resume and serialized seek; exact hardware evidence remains device/firmware scoped |
 | Live video | **`/app/live`** or v1 live-session API | On-demand, video-only, 1–60 seconds, up to 5 fps/960 px; fresh browser hardware evidence is scoped to one T8600/T8030 path |
 | Natural-language export | **Ask assistant** sidebar or terminal Agent | Requires model configuration; ordinary browsing does not |
 | Shared results and dynamic workspace | Both browser views | Device/timeline/job/player components; pin, reorder and restore references |
 
-The fixed event-search form has no direct continuous-export control. The Agent can submit continuous exports, and a workspace timeline backed by an Agent range receipt has an export action. The public [v1 contract](api/v1.md) and [legacy page routes](api/README.md) are separate interfaces. React migration status and acceptance evidence are tracked in the [feature-parity checklist](docs/FEATURE_PARITY.md); use `/legacy/` to return to the old page.
+The original event-search form at `/legacy/` has no direct continuous-export control. In React **Browse recordings**, choose **Check continuous availability** and **Export requested continuous window**; this needs no Agent model configuration. The Agent can also submit continuous exports, and a workspace timeline backed by an Agent range receipt has an export action. The public [v1 contract](api/v1.md) and [legacy page routes](api/README.md) are separate interfaces. React migration status and acceptance evidence are tracked in the [feature-parity checklist](docs/FEATURE_PARITY.md); use `/legacy/` to return to the old page.
 
 ### Quick start
 
@@ -74,7 +74,7 @@ Replace these example paths with your installed executables. Login and device di
 #### Browser workflow
 
 1. Sign in, then choose **Browse recordings**. Select a camera, date and time interval to find event recordings, download a result and play the saved MP4.
-2. To request a continuous interval, configure the Agent below and choose **Ask assistant**, or use the CLI/API. Specify the camera, calendar date, start/end and timezone; ambiguous requests require clarification.
+2. To request a continuous interval, choose **Check continuous availability**, then **Export requested continuous window** in **Browse recordings**. This does not require an Agent model. Alternatively, use **Ask assistant** with a configured Agent, or the CLI/API. Specify the camera, calendar date, start/end and timezone; ambiguous Agent requests require clarification.
 3. Follow the shared job card and inspect the actual coverage and validation result. A playable `partial` output remains incomplete.
 4. Pin useful workspace results and reorder them. Browser refresh restores references and observes existing resident work without another model call.
 
@@ -119,13 +119,14 @@ The resident owns exports independently of clients. Jobs on one HomeBase execute
 
 | Operation | v1 endpoint / behavior |
 |---|---|
+| List retained jobs | `GET /api/v1/jobs`; follow `nextCursor` for more pages |
 | Inspect a known job | `GET /api/v1/jobs/:jobId` |
 | Cancel queued/running work | `POST /api/v1/jobs/:jobId/cancel` with `{}`; active cancellation completes after cleanup |
 | Explicitly retry failed/cancelled work | `POST /api/v1/jobs/:jobId/retry` with `{"requestId":"NEW_UNIQUE_ID"}`; creates a new job and preserves the old one |
 | Start Live | `POST /api/v1/live-sessions` with `{"requestId":"NEW_UNIQUE_ID","serial":"CAMERA_SERIAL","maxDurationMs":60000}` |
 | Observe / view / stop Live | `GET /api/v1/live-sessions/:sessionId`, `GET /api/v1/live-sessions/:sessionId/media`, `POST /api/v1/live-sessions/:sessionId/stop` with `{}` |
 
-POSTs use `Content-Type: application/json` and browser callers must use the resident's matching Origin. There is currently no public endpoint to list all jobs; retain returned job IDs.
+POSTs use `Content-Type: application/json` and browser callers must use the resident's matching Origin. `GET /api/v1/jobs` lists retained resident jobs with pagination; follow `nextCursor`. Retain returned job IDs for direct lookup.
 
 On restart, safely queued jobs retain identity and order; execution still requires a valid session. Previously running capture becomes `failed` with `JOB_INTERRUPTED`, or `cancelled` if cancellation intent was saved. It is not automatically replayed or resumed. Inspect retained evidence and explicitly retry where appropriate. Existing job/artifact reads remain available after logout. Partial media is represented by `result.outcome: "partial"` with job `state: "failed"`; only affirmative coverage and validation can yield complete success. See [job lifecycle and recovery](jobs/README.md).
 
@@ -195,14 +196,14 @@ Based on the MIT-licensed [bropat/eufy-security-client](https://github.com/bropa
 | 登录、验证码、退出和会话恢复 | 页面、CLI、v1 会话 API | 单账号常驻会话；保存的会话失效时需要登录 |
 | 设备发现与能力矩阵 | 页面设备列表、CLI、v1 设备 API | 按摄像头/HomeBase/通道/固件记录；设备发现完整性仍未知 |
 | 事件查询、下载、已保存 MP4 播放 | **浏览录像**及旧版 HTTP 路由 | 没有事件不等于没有连续录像 |
-| 连续录像范围查询与导出 | CLI、v1 API、录像 Agent | 持久化任务、转换、全片解码及覆盖校验；结果可能为 partial |
+| 连续录像范围查询与导出 | **浏览录像**（`/app/recordings`）、CLI、v1 API、录像 Agent | 持久化任务、转换、全片解码及覆盖校验；结果可能为 partial |
 | 任务恢复、取消、显式重试 | **`/app/jobs`**、常驻任务服务、CLI 和 v1 API | 中断捕获不能续传；CLI 尚无取消/重试子命令 |
 | 历史浏览器回放 | **`/app/recordings`**、v1 回放会话 API | 在索引范围内有限预览，支持暂停/恢复和串行跳转；实机证据仅适用于对应设备/固件范围 |
 | 实时视频 | **`/app/live`** 或 v1 Live 会话 API | 按需启动的纯视频预览，1–60 秒、最高 5 fps/960 像素；新浏览器实机证据仅适用于一个 T8600/T8030 范围 |
 | 自然语言导出 | **询问助手**侧栏或终端 Agent | 需要配置模型；普通浏览不需要 |
 | 共享结果与动态工作区 | 两种页面模式 | 设备、时间轴、任务、播放器组件；支持固定、排序和引用恢复 |
 
-固定事件查询表单没有直接导出连续录像的按钮。Agent 可以提交连续导出；工作区中由 Agent 范围查询凭据生成的时间轴也提供导出操作。[v1 契约](api/v1.md)与[旧页面路由](api/README.md)是不同接口。React 迁移状态和验收记录见[功能对照清单](docs/FEATURE_PARITY.md)；使用 `/legacy/` 可返回旧版页面。
+`/legacy/` 的旧事件查询表单没有直接导出连续录像的按钮。在 React **浏览录像**中，选择**检查连续录像范围**，再选择**导出请求的连续录像时段**；无需配置 Agent 模型。Agent 也可以提交连续导出；工作区中由 Agent 范围查询凭据生成的时间轴也提供导出操作。[v1 契约](api/v1.md)与[旧页面路由](api/README.md)是不同接口。React 迁移状态和验收记录见[功能对照清单](docs/FEATURE_PARITY.md)；使用 `/legacy/` 可返回旧版页面。
 
 ### 快速开始
 
@@ -254,7 +255,7 @@ npm start
 #### 页面操作
 
 1. 登录后选择**浏览录像**，选择摄像头、日期和时间范围，查询事件、下载片段并播放已保存的 MP4。
-2. 要导出连续时段，先按下方说明配置 Agent，再选择**询问助手**；也可使用 CLI/API。明确摄像头、日期、起止时间和时区，不明确时由 Agent 追问。
+2. 要导出连续时段，在**浏览录像**中选择**检查连续录像范围**，再选择**导出请求的连续录像时段**，无需配置 Agent 模型。也可配置 Agent 后使用**询问助手**，或使用 CLI/API。明确摄像头、日期、起止时间和时区；Agent 会追问不明确的请求。
 3. 查看共享任务卡上的进度、实际覆盖和校验结果。可播放的 `partial` 文件仍是覆盖不完整的结果。
 4. 将常用结果固定到工作区并调整顺序。刷新页面会恢复引用、查询已有任务，不会再次调用模型。
 
@@ -299,13 +300,14 @@ node --env-file=.env.local agent/main.cjs --url http://127.0.0.1:3187
 
 | 操作 | v1 接口及行为 |
 |---|---|
+| 列出保留的任务 | `GET /api/v1/jobs`；按 `nextCursor` 翻页 |
 | 查看已知任务 | `GET /api/v1/jobs/:jobId` |
 | 取消排队/运行中的任务 | `POST /api/v1/jobs/:jobId/cancel`，正文 `{}`；运行中的任务等清理完成后才成为 cancelled |
 | 显式重试失败/取消任务 | `POST /api/v1/jobs/:jobId/retry`，正文 `{"requestId":"NEW_UNIQUE_ID"}`；创建新任务并保留原任务 |
 | 启动 Live | `POST /api/v1/live-sessions`，正文 `{"requestId":"NEW_UNIQUE_ID","serial":"CAMERA_SERIAL","maxDurationMs":60000}` |
 | 查看/播放/停止 Live | `GET /api/v1/live-sessions/:sessionId`、`GET /api/v1/live-sessions/:sessionId/media`、`POST /api/v1/live-sessions/:sessionId/stop`（正文 `{}`） |
 
-POST 使用 `Content-Type: application/json`；浏览器请求的 Origin 必须匹配常驻服务。目前没有公开的全部任务列表接口，请保留返回的任务 ID。
+POST 使用 `Content-Type: application/json`；浏览器请求的 Origin 必须匹配常驻服务。`GET /api/v1/jobs` 可分页列出保留的任务，请按 `nextCursor` 翻页。保留返回的任务 ID，以便直接查询。
 
 重启后，安全排队的任务保留标识与顺序，执行仍要求有效登录。原先运行中的捕获标记为 `failed` / `JOB_INTERRUPTED`；若已保存取消意图，则标记为 `cancelled`。不会自动重放或续传，应先检查保留的证据，再按需显式重试。退出登录后仍可读取已有任务及产物。部分录像使用 `result.outcome: "partial"`、任务状态 `state: "failed"`；只有覆盖和媒体验证均明确通过才算完整成功。详见[任务生命周期](jobs/README.md)。
 

@@ -212,14 +212,22 @@ class LiveSessions {
         c.connectionClosed = true;
       } catch { cleanupError = failure('LIVE_CLEANUP_FAILED'); }
       if (cleanupError) { c.error = cleanupError; c.state = 'failed'; throw cleanupError; }
+      clearTimeout(c.retryTimer); c.retryTimer = null;
       c.closed = true; c.state = c.error ? 'failed' : 'stopped';
       c.connection = c.p2p = c.station = c.decoder = null; c.streams = []; c.listeners = [];
     });
     c.cleanup = cleanup;
     // A failed cleanup must keep the resident admission owner, but it must not
-    // permanently memoize a rejected promise. An explicit stop can retry the
-    // still-owned resources and release the media slot only after success.
-    cleanup.catch(() => { if (c.cleanup === cleanup) c.cleanup = null; });
+    // permanently memoize a rejected promise. A later stop or resident retry
+    // releases the media slot only after the still-owned resources close.
+    cleanup.catch(() => {
+      if (c.cleanup !== cleanup) return;
+      c.cleanup = null;
+      if (!c.retryTimer) {
+        c.retryTimer = setTimeout(() => { c.retryTimer = null; if (!c.closed) this._end(c); }, 1000);
+        c.retryTimer.unref?.();
+      }
+    });
     return cleanup;
   }
   async stop(id) { const c = this._find(id); await this._dispose(c); return this.get(id); }

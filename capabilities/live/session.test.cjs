@@ -130,6 +130,22 @@ test('media disconnect owns cleanup; a duplicate consumer returns stable conflic
   assert.equal(f.live.get(started.sessionId).state, 'stopped'); assert.equal(f.live.isBusy(), false);
 });
 
+test('media disconnect retries transient cleanup while retaining admission', async t => {
+  const f = fixture(t, { closeFailures: 1 }), started = await f.start(), res = new PassThrough();
+  res.writeHead = () => {}; res.resume(); f.live.attach(started.sessionId, res); res.destroy();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(f.live.get(started.sessionId).state, 'failed');
+  assert.equal(f.live.isBusy(), true);
+  await assert.rejects(f.start('next'), { code: 'SERVICE_BUSY' });
+  const deadline = Date.now() + 3000;
+  while (f.live.isBusy() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(f.live.get(started.sessionId).cleanupComplete, true);
+  assert.equal(f.live.isBusy(), false);
+  const next = await f.start('next');
+  assert.notEqual(next.sessionId, started.sessionId);
+  await f.live.stop(next.sessionId);
+});
+
 for (const [scenario, code, status] of [['first-frame timeout', 'LIVE_MEDIA_TIMEOUT', 504],
   ['decoder failure', 'LIVE_DECODER_FAILED', 502], ['auth expiry', 'UNAUTHENTICATED', 401]]) {
   test(`${scenario} after start ack awaits matching stop and every cleanup stage`, async t => {
