@@ -567,6 +567,7 @@ test('Chromium Live refuses unknown capability and keeps one bounded resident me
     const page=await context.newPage(),requests=[]
     page.on('request',request=>{const url=new URL(request.url());if(url.pathname.startsWith('/api/v1/live-sessions'))requests.push({method:request.method(),path:url.pathname})})
     await page.goto(f.url+'/app/live');await page.getByRole('heading',{name:view.title}).waitFor()
+    await page.getByLabel(view.camera).locator('optgroup').nth(1).waitFor({state:'attached'})
     assert.deepEqual(await page.getByLabel(view.camera).locator('optgroup').evaluateAll(groups=>groups.map(group=>group.label)),[view.attemptable,view.other])
     assert.equal(await page.getByLabel(view.camera).locator('optgroup').first().locator('option').first().getAttribute('value'),'camera')
     assert.equal(requests.some(item=>item.method==='POST'&&item.path==='/api/v1/live-sessions'),false,'mount must not start a camera')
