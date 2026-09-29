@@ -15,13 +15,13 @@ node interface/server.cjs
 
 The service listens only on local `127.0.0.1`. The request Host and submission Origin must match the actual port. `createServer(options)` creates a server without listening; call `.start()` to start it and, after `.close()`, await `.shutdown()` to drain owned work. Normal session restoration follows the existing [authentication contract](../capabilities/auth/README.md).
 
-On `/legacy/`, choose **Browse recordings** for the existing login and event search/download flow, or **Ask assistant** for a natural recording request. The conversation sidebar explains/clarifies the request; the main area shows shared API device cards, normalized range timelines, durable job progress and registered players. Switching views preserves owned work. Refreshing observes the resident without paid model polling. See the [Agent interface contract](agent/README.md).
+On `/legacy/`, choose **Browse recordings** for the existing login and event search/download flow. In the React shell, use the floating robot button to open task-capable assistant chat for a natural recording request. The conversation panel explains or clarifies the request; the main area shows shared API device cards, normalized range timelines, durable job progress and registered players. Switching views preserves owned work. Refreshing observes the resident without paid model polling. See the [Agent interface contract](agent/README.md).
 
 | Directory | Current status | Responsibility |
 | --- | --- | --- |
 | `pages/` | Migrated | Fixed feature pages |
 | `components/` | Implemented | Shared cards, timelines, and players |
-| `agent/` | Implemented | Resident conversation adapter, sidebar and job observation |
+| `agent/` | Implemented | Resident conversation adapter, assistant launcher and job observation |
 | `workspace/` | Runnable | Registered Agent composition, pinned references, ordering and API layout restoration |
 | `i18n/` | Implemented | Shared English/Chinese catalogs, automatic browser-language matching, and manual selection |
 
@@ -35,7 +35,7 @@ Issue #35 adds a Vite React/TypeScript shell. PR #46 serves it at **`/`** as wel
 
 The shell reads `GET /api/v1/contract` before using typed v1 session mutations. It also reads the established `/status` compatibility projection because it carries localized asynchronous session outcomes and inventory diagnostics that the current v1 session projection does not include. Passwords, CAPTCHA answers and email codes live only in submitted form state; they are not put in browser storage, URLs or logs. Existing job and artifact reads remain resident-owned and therefore remain available after logout.
 
-The shell's **Assistant** drawer uses `@assistant-ui/react` with an `ExternalStoreRuntime` adapter over the existing resident `/interface/agent/turn` and `/interface/agent/state` routes. It does not add another model backend, streaming protocol or cloud persistence. The shared workspace stays mounted behind the drawer and reuses the existing registered device/timeline/job/player renderer; its timeline export action remains the existing `/interface/agent/export` operation. Unsupported edit, regenerate and cancel controls are not rendered.
+The shell's floating robot button opens the **Assistant** drawer, which uses `@assistant-ui/react` with an `ExternalStoreRuntime` adapter over the existing resident `/interface/agent/turn` and `/interface/agent/state` routes. It does not add another model backend, streaming protocol or cloud persistence. The shared workspace stays mounted behind the drawer and reuses the existing registered device/timeline/job/player renderer; its timeline export action remains the existing `/interface/agent/export` operation. Unsupported edit, regenerate and cancel controls are not rendered.
 
 The recordings route selects an exact resident serial and sends one unchanged device/window to the legacy event routes and the v1 continuous range/export routes. Event results, saved event MP4s, continuous index ranges and continuous jobs stay visibly separate. The browser stores only the current export request ID and input plus known job IDs under `eufy-agent-hub.recording-workbench`; it never stores credentials, capability snapshots, job results or media paths. A refresh can safely repeat a submission whose response was lost, while terminal jobs are only observed. Changing the device/window requires an explicit new-intent acknowledgement. See [React recordings validation](react/VALIDATION.md).
 
