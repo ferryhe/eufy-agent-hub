@@ -1,6 +1,6 @@
 # Shadcn Admin provenance
 
-This opt-in React shell adapts `satnaing/shadcn-admin` revision `e16c87f213a5ba5e45964e9b67c792105ec74d26` (v2.2.1), MIT, Sat Naing (2024). Attribution remains in `../../THIRD_PARTY_NOTICES.md`.
+The React shell served at `/` and `/app/` adapts `satnaing/shadcn-admin` revision `e16c87f213a5ba5e45964e9b67c792105ec74d26` (v2.2.1), MIT, Sat Naing (2024). Attribution remains in `../../THIRD_PARTY_NOTICES.md`.
 
 | Pinned upstream path | Local substantive adaptation |
 | --- | --- |

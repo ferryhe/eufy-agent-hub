@@ -6,7 +6,8 @@ The resident [recording API v1](v1.md) now provides the stable device → record
 
 | Method | Path | Purpose / request |
 | --- | --- | --- |
-| GET | `/` | Fixed login and recording page |
+| GET | `/` | React interface |
+| GET | `/legacy/` | Original login and recording page fallback |
 | GET | `/status` | Login state, device list, and `busy` |
 | POST | `/login` | `{email,password,country}`, for example region `CA` |
 | POST | `/verify` | `{code}`, an email verification code or CAPTCHA answer |
