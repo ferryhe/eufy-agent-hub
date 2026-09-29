@@ -20,6 +20,40 @@ test('live connection joins upstream async close, destroys the camera and retire
   assert.throws(() => socket.address(), { code: 'ERR_SOCKET_DGRAM_NOT_RUNNING' });
 });
 
+test('failed protocol close keeps the connection retryable', async t => {
+  const socket = dgram.createSocket('udp4'); await new Promise(resolve => socket.bind(0, '127.0.0.1', resolve));
+  t.after(() => { try { socket.close(); } catch {} });
+  let connected = true, closes = 0, destroyed = 0;
+  const p2p = { socket, isConnected: () => connected, async close() {
+    if (++closes === 1) throw new Error('transient close failure');
+    connected = false;
+  } };
+  const connection = new LiveConnection({});
+  connection.station = { p2pSession: p2p, close() { p2p.close(); } };
+  connection.camera = { destroy() { destroyed++; } };
+  await assert.rejects(connection.close(), /transient close failure/);
+  assert.equal(connected, true);
+  assert.doesNotThrow(() => socket.address());
+  await connection.close();
+  assert.equal(closes, 2); assert.equal(destroyed, 1); assert.equal(connected, false);
+  assert.throws(() => socket.address(), { code: 'ERR_SOCKET_DGRAM_NOT_RUNNING' });
+});
+
+test('failed socket close retries without sending another protocol close', async t => {
+  const socket = dgram.createSocket('udp4'); await new Promise(resolve => socket.bind(0, '127.0.0.1', resolve));
+  const closeSocket = socket.close.bind(socket);
+  t.after(() => { try { closeSocket(); } catch {} });
+  let socketCloses = 0, protocolCloses = 0, connected = true;
+  socket.close = callback => { if (++socketCloses === 1) throw new Error('transient socket failure'); closeSocket(callback); };
+  const p2p = { socket, isConnected: () => connected, async close() { protocolCloses++; connected = false; } };
+  const connection = new LiveConnection({});
+  connection.station = { p2pSession: p2p, close() { p2p.close(); } };
+  await assert.rejects(connection.close(), /transient socket failure/);
+  await connection.close();
+  assert.equal(protocolCloses, 1); assert.equal(socketCloses, 2);
+  assert.throws(() => socket.address(), { code: 'ERR_SOCKET_DGRAM_NOT_RUNNING' });
+});
+
 test('camera-only setup failure is cleaned and missing Mega member metadata uses the restored account', async t => {
   const connection = new LiveConnection({}); let destroyed = 0;
   connection.camera = { destroy: () => destroyed++ }; await connection.close(); assert.equal(destroyed, 1);

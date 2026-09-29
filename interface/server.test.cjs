@@ -26,7 +26,7 @@ test('local HTTP server serves the migrated page on its configured port without 
   await new Promise(resolve => server.start(resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   const page = await fetch(origin);
-  assert.equal(page.status, 200); assert.match(await page.text(), /data-i18n="ui.title"/);
+  assert.equal(page.status, 200); assert.match(await page.text(), /id="root"/);
   const legacy = await fetch(origin + '/legacy/');
   assert.equal(legacy.status, 200); assert.match(await legacy.text(), /data-i18n="ui.title"/);
   for (const script of ['i18n.mjs', 'local-login.mjs', 'results.mjs', 'sidebar.mjs', 'workspace.mjs', 'contract.mjs']) {
@@ -88,7 +88,7 @@ test('built React app supports deep links without intercepting resident API, leg
   t.after(async () => { await new Promise(resolve => server.close(resolve)); await server.shutdown(); fs.rmSync(outputRoot, { recursive: true, force: true }); });
   await new Promise(resolve => server.start(resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
-  for (const route of ['/app/', '/app/recordings/retained-item', '/app/settings']) {
+  for (const route of ['/', '/app/', '/app/recordings/retained-item', '/app/settings']) {
     const response = await fetch(origin + route);
     assert.equal(response.status, 200, route);
     assert.match(response.headers.get('content-type'), /text\/html/);
@@ -98,7 +98,7 @@ test('built React app supports deep links without intercepting resident API, leg
   const asset = /src="(\/app\/assets\/[^\"]+\.js)"/.exec(app)?.[1];
   assert.ok(asset, 'Vite entry asset is present');
   assert.match((await fetch(origin + asset)).headers.get('content-type'), /javascript/);
-  assert.equal((await fetch(origin + '/')).status, 200, 'legacy root still works');
+  assert.match(await (await fetch(origin + '/legacy/')).text(), /data-i18n="ui.title"/, 'legacy fallback remains available');
   assert.equal((await fetch(origin + '/status')).status, 200, 'legacy status remains reachable');
   assert.equal((await fetch(origin + '/api/v1/contract')).status, 200, 'v1 contract is not intercepted');
   assert.equal((await fetch(origin + '/api/v1/jobs/no-such-job/artifacts/no-such-artifact')).status, 404, 'v1 media/artifact routing is not intercepted');

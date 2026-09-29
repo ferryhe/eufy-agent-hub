@@ -5,7 +5,7 @@ type Language = 'en'|'zh-CN'
 const words = {
   en: {
     title:'Live preview',intro:'Start a video-only preview on demand. The resident allows one media consumer across all cameras and HomeBases.',
-    camera:'Camera',choose:'Choose a camera',duration:'Maximum duration (seconds)',start:'Start live preview',stop:'Stop preview',
+    camera:'Camera',choose:'Choose a camera',attemptable:'Can attempt preview',other:'Other devices (preview unavailable)',duration:'Maximum duration (seconds)',start:'Start live preview',stop:'Stop preview',
     loading:'Loading camera capabilities…',noDevices:'No cameras are available from the resident.',signedOut:'Sign in to load camera capabilities.',
     capability:'Live capability',verified:'Verified for this exact recorded device scope',hint:'Protocol hint: a bounded attempt is allowed; hardware support is not verified.',
     unknown:'Unknown capability: preview launch is disabled.',unsupported:'Unsupported capability or model path: preview launch is disabled.',
@@ -16,13 +16,12 @@ const words = {
     limits:'Video only · maximum 5 fps · width up to 960 px · one to 60 seconds. No audio, talkback or RTSP controls.',
     remaining:'Seconds remaining',durationError:'Choose a whole number from 1 to 60 seconds.',
     stopUnconfirmed:'Cleanup is not confirmed. The resident still owns this session; retry Stop before leaving this page.',
-    stopFailed:'The resident did not confirm cleanup. The preview remains owned until cleanup completes.',
-    loadFailed:'Could not load camera capabilities from the resident.',busy:'Another resident media operation may own the shared media slot.',
+    loadFailed:'Could not load camera capabilities from the resident.',
     capabilityReason:'Capability reason',resources:'Cleanup',confirmed:'confirmed',pending:'pending',
   },
   'zh-CN': {
     title:'实时预览',intro:'按需启动纯视频预览。常驻服务在所有摄像头和 HomeBase 之间只允许一个媒体使用者。',
-    camera:'摄像头',choose:'选择摄像头',duration:'最长时长（秒）',start:'启动实时预览',stop:'停止预览',
+    camera:'摄像头',choose:'选择摄像头',attemptable:'可尝试预览',other:'其他设备（无法启动预览）',duration:'最长时长（秒）',start:'启动实时预览',stop:'停止预览',
     loading:'正在读取摄像头能力…',noDevices:'常驻服务未返回摄像头。',signedOut:'请先登录，再读取摄像头能力。',
     capability:'实时能力',verified:'该精确设备范围已有验证记录',hint:'协议提示：允许进行有限尝试；硬件支持尚未验证。',
     unknown:'能力未知：已禁用预览启动。',unsupported:'能力或型号路径不支持：已禁用预览启动。',
@@ -33,8 +32,7 @@ const words = {
     limits:'纯视频 · 最高 5 fps · 最大宽度 960 像素 · 1 至 60 秒。没有音频、双向语音或 RTSP 控件。',
     remaining:'剩余秒数',durationError:'时长须为 1 至 60 的整数。',
     stopUnconfirmed:'尚未确认清理完成。常驻服务仍拥有此会话；请重试停止后再离开页面。',
-    stopFailed:'常驻服务尚未确认清理。清理完成前，此会话仍由服务持有。',
-    loadFailed:'无法从常驻服务读取摄像头能力。',busy:'常驻服务的媒体槽可能正被其他媒体操作占用。',
+    loadFailed:'无法从常驻服务读取摄像头能力。',
     capabilityReason:'能力原因',resources:'清理状态',confirmed:'已确认',pending:'等待确认',
   },
 } as const
@@ -43,7 +41,7 @@ function supportedPath(device?:Device){
   const scope=device?.verificationScope
   return scope?.model==='T8600'&&scope.homeBase?.model==='T8030'&&Number.isInteger(scope.channel)&&scope.channel!==null&&scope.channel>=0
 }
-function problem(error:any){return error?.body?.error||{code:error?.message||'SERVICE_UNAVAILABLE',message:error?.message||'Request failed'}}
+function problem(error:any){return error?.body?.error||{code:error?.code||error?.message||'SERVICE_UNAVAILABLE',message:error?.message||'Request failed'}}
 
 export function LivePreview({authenticated,language,catalog,inventoryRevision,onRegisterStop}:{authenticated:boolean;language:Language;catalog:Record<string,string>;inventoryRevision:number;onRegisterStop:(stop:(()=>Promise<void>)|undefined)=>void}){
   const c=words[language]
@@ -54,7 +52,9 @@ export function LivePreview({authenticated,language,catalog,inventoryRevision,on
   const liveRef=useRef<LiveSession>(),requestIdRef=useRef<string>(),startPromiseRef=useRef<Promise<void>>(),stopPromiseRef=useRef<Promise<LiveSession>>(),stopRequestedRef=useRef(false)
   const selected=devices.find(device=>device.serial===serial)
   const capability=selected?.capabilities?.liveVideo
-  const eligible=Boolean(authenticated&&supportedPath(selected)&&selected?.availability!=='offline'&&selected?.availability!=='unavailable'&&['verified','protocol_hint'].includes(capability?.status||''))
+  const canAttempt=(device?:Device)=>Boolean(supportedPath(device)&&device?.availability!=='offline'&&device?.availability!=='unavailable'&&['verified','protocol_hint'].includes(device?.capabilities?.liveVideo?.status||''))
+  const attemptableDevices=devices.filter(canAttempt),otherDevices=devices.filter(device=>!canAttempt(device))
+  const eligible=authenticated&&canAttempt(selected)
 
   const setCurrent=(value:LiveSession|undefined)=>{liveRef.current=value;setLive(value)}
   const errorMessage=(value:any)=>{const error=problem(value);return catalog[`ui.error.${error.code}`]||error.message||error.code}
@@ -145,7 +145,9 @@ export function LivePreview({authenticated,language,catalog,inventoryRevision,on
     {!authenticated&&<p className="notice" role="status">{c.signedOut}</p>}
     {authenticated&&<div className="card live-controls">
       <label>{c.camera}<select value={serial} disabled={loading||activeOwner||operation!=='idle'} onChange={event=>setSerial(event.target.value)}>
-        <option value="">{c.choose}</option>{devices.map(device=><option key={device.serial} value={device.serial}>{device.name} · {device.model||'?'} · {device.serial}</option>)}
+        <option value="">{c.choose}</option>
+        {attemptableDevices.length>0&&<optgroup label={c.attemptable}>{attemptableDevices.map(device=><option key={device.serial} value={device.serial}>{device.name} · {device.model||'?'} · {device.serial}</option>)}</optgroup>}
+        {otherDevices.length>0&&<optgroup label={c.other}>{otherDevices.map(device=><option key={device.serial} value={device.serial}>{device.name} · {device.model||'?'} · {device.serial}</option>)}</optgroup>}
       </select></label>
       <label>{c.duration}<input aria-label={c.duration} type="number" min="1" max="60" step="1" value={duration} disabled={activeOwner||operation!=='idle'} onChange={event=>setDuration(Number(event.target.value))}/></label>
       {loading&&<p role="status">{c.loading}</p>}{loadError&&<p role="status" className="error">{errorMessage(loadError)}</p>}
@@ -169,15 +171,14 @@ export function LivePreview({authenticated,language,catalog,inventoryRevision,on
       <p>{c.resources}: {live.cleanupComplete?c.confirmed:c.pending}</p>
       {(statusError||startError||stopError)&&<p role="status" className="error">{errorMessage(statusError||startError||stopError)}</p>}
       <button type="button" disabled={operation!=='idle'} onClick={()=>void stopSession(live.sessionId).catch(()=>{})}>{operation==='stopping'?c.stopping:c.stop}</button>
-      {live.error&&<p role="status" className="error">{live.error.code}: {errorMessage(live.error)}</p>}
+      {live.error&&<p role="status" className="error">{errorMessage(live.error)}</p>}
     </section>}
     {live&&live.cleanupComplete&&<section className="live-session" aria-label={c.title}>
       <p role="status" className={live.state==='failed'?'error':'live-state'}>{stateText(live)}</p>
       <p>{c.resources}: {c.confirmed}</p>
-      {live.error&&<p role="status" className="error">{live.error.code}: {errorMessage(live.error)}</p>}
-      {stopError&&!live.cleanupComplete&&<p role="status" className="error">{c.stopUnconfirmed} {errorMessage(stopError)}</p>}
+      {live.error&&<p role="status" className="error">{errorMessage(live.error)}</p>}
     </section>}
-    {startError&&<p role="status" className="error">{errorMessage(startError)}{startError.code==='SERVICE_BUSY'?` ${c.busy}`:''}</p>}
-    {stopError&&activeOwner&&<p role="status" className="error">{c.stopFailed} {errorMessage(stopError)}</p>}
+    {startError&&<p role="status" className="error">{errorMessage(startError)}</p>}
+    {stopError&&activeOwner&&<p role="status" className="error">{c.stopUnconfirmed}</p>}
   </section>
 }

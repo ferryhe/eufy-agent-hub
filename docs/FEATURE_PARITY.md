@@ -1,6 +1,6 @@
 # React migration parity and cutover checklist
 
-The final `/` cutover belongs to M5/#40. A check in the first five rows means the scoped feature is present on `main` with the recorded evidence; it does not make `/` switch automatically. M5 remains blocked until its Live browser and exact-scope hardware gates pass. The legacy page is available at both `/` (current default) and `/legacy/` (transition fallback).
+The final `/` cutover belongs to M5/#40. M1–M4 and M6 are accepted on `main`. Fresh exact-scope React Live hardware evidence on 2026-09-29 supports the M5 cutover in PR #46: `/` serves React and `/legacy/` remains the old page. Final PR review and required CI must still pass before merge or closing #40.
 
 | Milestone | Status | Evidence / boundary |
 | --- | --- | --- |
@@ -9,18 +9,19 @@ The final `/` cutover belongs to M5/#40. A check in the first five rows means th
 | M3 / #37 Jobs | **Accepted** | Merged PR [#43](https://github.com/ferryhe/eufy-agent-hub/pull/43); Actions run 89 passed; recorded validation: `npm test` 543/543, Chromium 22/22. The resident remains authoritative for IDs, pagination, cancel/retry and cleanup. |
 | M4 / #38 Agent/workspace | **Accepted** | Merged PR [#44](https://github.com/ferryhe/eufy-agent-hub/pull/44); Actions run 94 passed; recorded validation: `npm test` 543/543, Chromium 25/25 at 390/1440 with scripted resident model flows. |
 | M6 / #39 Historical browser playback | **Accepted; #40 dependency satisfied** | Merged PR [#45](https://github.com/ferryhe/eufy-agent-hub/pull/45) at `02dc7a94d46ffb88da1e79ae7c201e58928f70cc`; Actions run 97 passed; recorded validation: 576/576 and Chromium 36/36. Exact-scope T8600/T8030 browser hardware acceptance passed for first frame/source time, pause/resume, bounded seek, close, stop confirmation and cleanup. Other devices, playback speeds, Safari and unlisted protocol features are not inferred. |
-| M5 / #40 Live page integration | **Implemented; L1 browser CI passed, L2 hardware NOT_RUN/pending** | Draft PR [#46](https://github.com/ferryhe/eufy-agent-hub/pull/46), Actions run 103 passed: `npm test` 554 passed / 23 skipped; Chromium 32 passed / 8 skipped. All four Live browser cases passed. Fresh independent review found no actionable issues; GitHub reported zero open review threads. Adds `/app/live` over resident start/status/MJPEG/stop, with no start on mount, no auto-renew, one stable browser media consumer, explicit 1–60 second bound, server-authoritative resident-wide exclusivity, capability eligibility, stop confirmation on route departure, and recovery/retry for incomplete startup cleanup. Fresh React Live hardware acceptance was unavailable in this run. Synthetic tests and the older API-only hardware record do not change that status. |
-| M5 / #40 parity checklist and default route | **Blocked; `/` remains legacy** | M1–M4 and M6 are accepted above. The fresh Live hardware acceptance remains NOT_RUN/pending, so final default cutover and production readiness are not claimed. `/legacy/` serves the old page as a documented transition fallback. Session, job, Agent, preference and media stores and IDs remain resident-owned and unchanged. |
+| M5 / #40 Live page integration | **Local L1 and L2 passed; remote gate pending** | Draft PR [#46](https://github.com/ferryhe/eufy-agent-hub/pull/46). With FFmpeg 9.0.2 and Python/PyAV, local `npm test` passed 579/579; Chromium passed 40/40, including real FFmpeg playback at 390/1440. React `/app/live` started a real T8600/T8030/channel 2 preview in the in-app browser on 2026-09-29. Chromium decoded a 960×540 frame. Explicit Stop showed cleanup confirmed. A second bounded session decoded 153 frames and ended with stop confirmed and protocol, connection, decoder and streams closed. Camera firmware was 1.0.5.0/18137 and HomeBase firmware 3.8.7.4/1.4.0.8. Exact serial binding is in ignored local `output/live/react-browser-acceptance-2026-09-29.json` (camera SHA-256 prefix `BB10CF092557`). This is one exact path; other hardware, talkback and RTSP remain unverified. |
+| M5 / #40 parity checklist and default route | **Implemented in PR #46; final review and CI pending** | M1–M4 and M6 are accepted above. `/` serves React, `/app/*` deep links remain, and `/legacy/` serves the old page for one transition release. Session, job, Agent, preference and media stores and IDs remain resident-owned and unchanged. Do not close #40 or merge until the final gates below pass. |
 
 ## M5 acceptance items
 
 - [x] All six migration features are mapped above; M6's required historical browser playback gate passed in PR #45.
 - [x] Live uses the existing resident API and existing media admission guards; it does not add a frontend lock or advertise talkback/RTSP.
 - [x] Unknown/unsupported capability or an ineligible model/channel path refuses launch; a protocol hint is described as unverified.
-- [x] Legacy fallback exists at `/legacy/`; old root, API, CLI, deep-link and media routes remain intact while cutover is blocked.
+- [x] React default exists at `/`; `/legacy/` retains the old page. API, CLI, deep-link and media routes remain intact.
 - [x] README and module documentation describe current entry points, installation, rollback, media prerequisites and evidence limits.
-- [x] Current-head Chromium browser tests, independent review and required CI all pass with zero open findings/threads (PR #46, Actions run 103; GitHub review-thread list empty).
-- [ ] Fresh authorized T8030/T8600 Live hardware start/decoded-frame/stop/cleanup acceptance passes. If unavailable, keep this row NOT_RUN and the default cutover blocked.
-- [ ] Only after all rows above pass: switch `/` to React and retain `/legacy/` for one transition release.
+- [x] `npm run build`, `npm test` (579/579 with FFmpeg/PyAV), and Chromium browser tests (40/40 with FFmpeg) passed locally; a resident restart restored authentication. `/`, `/legacy/`, `/app/live`, `/app/jobs`, CLI auth and v1 routes responded on the same origin.
+- [ ] Fresh independent review and required CI pass at the final PR head, with zero open findings/threads.
+- [x] Fresh authorized T8030/T8600 Live browser start/decoded-frame/stop/cleanup acceptance passed for the exact scope recorded above.
+- [x] `/` serves React and `/legacy/` is retained for one transition release.
 
-Merge protocol remains one scoped PR per issue, fresh independent review, fix and re-review of findings, all required CI green, no unresolved threads, then the repository's remote feedback window and cleanup. A pending hardware gate cannot be waived by fixture or Chromium-only evidence.
+Merge protocol remains one scoped PR per issue, fresh independent review, fix and re-review of findings, all required CI green, no unresolved threads, then the repository's remote feedback window and cleanup. Hardware claims remain limited to the observed device and firmware scope.

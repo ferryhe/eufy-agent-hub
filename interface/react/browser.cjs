@@ -559,14 +559,16 @@ async function liveBrowserFixture(t,{failStartupCleanupAttempts=0}={}){
 test('Chromium Live refuses unknown capability and keeps one bounded resident media owner through preference rerenders and explicit stop',async t=>{
   const f=await liveBrowserFixture(t),browser=await chromium.launch({headless:true});f.setBrowser(browser)
   for(const view of [
-    {width:1440,height:900,locale:'en',title:'Live preview',camera:'Camera',unknown:'unknown-camera',unknownStatus:'Unknown capability: preview launch is disabled.',start:'Start live preview',stop:'Stop preview',stopped:'Stopped and cleaned up.'},
-    {width:390,height:844,locale:'zh-CN',title:'实时预览',camera:'摄像头',unknown:'unknown-camera',unknownStatus:'能力未知：已禁用预览启动。',start:'启动实时预览',stop:'停止预览',stopped:'已停止并完成清理。'},
+    {width:1440,height:900,locale:'en',title:'Live preview',camera:'Camera',attemptable:'Can attempt preview',other:'Other devices (preview unavailable)',unknown:'unknown-camera',unknownStatus:'Unknown capability: preview launch is disabled.',start:'Start live preview',stop:'Stop preview',stopped:'Stopped and cleaned up.'},
+    {width:390,height:844,locale:'zh-CN',title:'实时预览',camera:'摄像头',attemptable:'可尝试预览',other:'其他设备（无法启动预览）',unknown:'unknown-camera',unknownStatus:'能力未知：已禁用预览启动。',start:'启动实时预览',stop:'停止预览',stopped:'已停止并完成清理。'},
   ]){
     const context=await browser.newContext({viewport:{width:view.width,height:view.height},locale:view.locale});
     await context.addInitScript(locale=>localStorage.setItem('eufy-agent-hub.language',locale),view.locale)
     const page=await context.newPage(),requests=[]
     page.on('request',request=>{const url=new URL(request.url());if(url.pathname.startsWith('/api/v1/live-sessions'))requests.push({method:request.method(),path:url.pathname})})
     await page.goto(f.url+'/app/live');await page.getByRole('heading',{name:view.title}).waitFor()
+    assert.deepEqual(await page.getByLabel(view.camera).locator('optgroup').evaluateAll(groups=>groups.map(group=>group.label)),[view.attemptable,view.other])
+    assert.equal(await page.getByLabel(view.camera).locator('optgroup').first().locator('option').first().getAttribute('value'),'camera')
     assert.equal(requests.some(item=>item.method==='POST'&&item.path==='/api/v1/live-sessions'),false,'mount must not start a camera')
     assert.equal(requests.some(item=>item.path.endsWith('/media')),false,'mount must not attach a media consumer')
     await page.getByLabel(view.camera).selectOption(view.unknown)
@@ -634,6 +636,7 @@ test('Chromium Live exposes and retries cleanup when startup fails before return
   assert.equal(startFailure[0].live.cleanupComplete,false)
   await page.getByRole('button',{name:'Jobs'}).click()
   await page.getByRole('heading',{name:'Live preview'}).waitFor()
+  await page.getByText('Cleanup is not confirmed. The resident still owns this session; retry Stop before leaving this page.',{exact:true}).waitFor()
   assert.equal(f.calls.decoderClose,2,'departure retry should be attempted and remain pending')
   await page.getByRole('button',{name:'Stop preview'}).click()
   await page.waitForFunction(async url=>{const response=await fetch(url+'/api/v1/session');return !(await response.json()).busy},f.url)

@@ -27,9 +27,14 @@ class LiveConnection extends LocalRecordings {
       p2p.close = () => closing ||= Promise.resolve().then(() => originalClose.call(p2p));
       // Stop reconnect admission before awaiting the P2P END response.
       station.close();
-      const closure = (async () => {
+      let cleanup, protocolClosed = false;
+      const close = () => cleanup ||= (async () => {
         try {
-          await p2p.close();
+          if (!protocolClosed) {
+            await p2p.close();
+            if (p2p.isConnected()) throw new Error('LIVE_CLEANUP_FAILED');
+            protocolClosed = true;
+          }
           const socket = p2p.socket;
           if (socket) {
             socket.removeAllListeners();
@@ -40,10 +45,10 @@ class LiveConnection extends LocalRecordings {
           }
           if (p2p.isConnected()) throw new Error('LIVE_CLEANUP_FAILED');
         } finally { p2p.close = originalClose; }
-      })();
-      closure.catch(() => {}); this.closures.push(closure);
+      })().catch(error => { cleanup = undefined; throw error; });
+      this.closures.push(close);
     }
-    const all = Promise.all(this.closures); all.catch(() => {}); return all;
+    const all = Promise.all(this.closures.map(close => close())); all.catch(() => {}); return all;
   }
 }
 
