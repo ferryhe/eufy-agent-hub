@@ -56,7 +56,7 @@ export function LivePreview({authenticated,language,catalog,inventoryRevision,on
   const attemptableDevices=devices.filter(canAttempt),otherDevices=devices.filter(device=>!canAttempt(device))
   const eligible=authenticated&&canAttempt(selected)
 
-  const setCurrent=(value:LiveSession|undefined)=>{liveRef.current=value;setLive(value)}
+  const setCurrent=(value:LiveSession|undefined)=>{if(value?.cleanupComplete)requestIdRef.current=undefined;liveRef.current=value;setLive(value)}
   const errorMessage=(value:any)=>{const error=problem(value);return catalog[`ui.error.${error.code}`]||error.message||error.code}
 
   useEffect(()=>{
@@ -74,7 +74,6 @@ export function LivePreview({authenticated,language,catalog,inventoryRevision,on
     const task=api.stopLive(sessionId,keepalive).then(({live:next})=>{
       setCurrent(next)
       if(!next.cleanupComplete)throw Object.assign(new Error('LIVE_CLEANUP_PENDING'),{code:'LIVE_CLEANUP_PENDING'})
-      requestIdRef.current=undefined
       return next
     }).catch(value=>{setStopError(problem(value));throw value}).finally(()=>{if(stopPromiseRef.current===task)stopPromiseRef.current=undefined;setOperation('idle')})
     stopPromiseRef.current=task

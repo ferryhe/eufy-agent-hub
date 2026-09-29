@@ -655,6 +655,13 @@ test('Chromium Live expiry is resident enforced and does not auto-renew',async t
   await page.waitForTimeout(1300)
   assert.equal(starts.length,1);assert.equal(f.calls.start,1);assert.equal(f.calls.stop,1);assert.equal(f.calls.close,1)
   assert.equal((await (await page.request.get(f.url+'/api/v1/session')).json()).busy,false)
+  const restarted=page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/v1/live-sessions')
+  await page.getByRole('button',{name:'Start live preview'}).click()
+  const next=await restarted;assert.equal(next.status(),201,'manual restart after expiry needs a fresh request identity')
+  assert.notEqual((await next.json()).live.sessionId,starts[0].live.sessionId)
+  await page.waitForFunction(()=>Boolean(document.querySelector('.live-video')?.naturalWidth))
+  await page.getByRole('button',{name:'Stop preview'}).click();await page.getByText('Stopped and cleaned up.',{exact:true}).waitFor()
+  assert.equal(f.calls.start,2);assert.equal(f.calls.stop,2);assert.equal(f.calls.close,2)
 })
 
 test('Chromium status polling does not reload device inventory until explicit refresh',async t=>{
