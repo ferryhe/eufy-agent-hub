@@ -26,6 +26,21 @@ test('decoder parses split JPEG frames, discards stderr and awaits child close',
   assert.deepEqual(child.kills, ['SIGTERM']); assert.equal(video.listenerCount('data'), 0);
 });
 
+test('decoder close timeout keeps cleanup pending until a later retry observes child close', async () => {
+  const child = childFixture(), video = new PassThrough(), errors = [];
+  const decoder = createDecoder({ video, metadata: { videoCodec: 0 }, onFrame: () => assert.fail(),
+    onError: error => errors.push(error), spawnProcess: () => child });
+  await assert.rejects(decoder.close(), { code: 'LIVE_CLEANUP_FAILED' });
+  let finished = false;
+  const retry = decoder.close().then(() => { finished = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(finished, false, 'a retry must still await child close');
+  child.emit('close', 0);
+  await retry; await decoder.close();
+  assert.equal(finished, true); assert.deepEqual(errors, []);
+  assert.deepEqual(child.kills, ['SIGTERM', 'SIGKILL', 'SIGTERM']);
+});
+
 for (const mode of ['missing', 'invalid', 'exit']) test(`decoder ${mode} returns only a structured safe error`, async () => {
   const child = childFixture(), errors = [];
   const decoder = createDecoder({ video: new PassThrough(), metadata: { videoCodec: 0 }, onFrame: () => assert.fail(),

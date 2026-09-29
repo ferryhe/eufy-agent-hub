@@ -37,7 +37,7 @@ function createDecoder({ video, metadata, onFrame, onError, ffmpeg = process.env
       let timeout;
       try { await Promise.race([ended, new Promise((_resolve, reject) => { timeout = setTimeout(() => reject(fail('LIVE_CLEANUP_FAILED')), 5000); })]); }
       finally { clearTimeout(kill); clearTimeout(timeout); }
-    })();
+    })().catch(error => { closePromise = undefined; throw error; });
     return closePromise;
   } };
 }

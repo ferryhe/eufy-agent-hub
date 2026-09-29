@@ -13,7 +13,7 @@ const { installAgentRoutes } = require('./agent/http.cjs');
 const appDist = path.join(__dirname, 'app-dist');
 const appMime = file => ({ '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' }[path.extname(file)] || 'application/octet-stream');
 function serveApp(req, res, pathname) {
-  if (req.method !== 'GET' || !(pathname === '/app' || pathname === '/app/' || pathname.startsWith('/app/'))) return false;
+  if (req.method !== 'GET' || !(pathname === '/' || pathname === '/app' || pathname === '/app/' || pathname.startsWith('/app/'))) return false;
   const relative = pathname.slice('/app/'.length);
   const candidate = relative && !relative.includes('..') ? path.join(appDist, relative) : '';
   const file = candidate && fs.existsSync(candidate) && fs.statSync(candidate).isFile() ? candidate : path.join(appDist, 'index.html');
@@ -45,7 +45,7 @@ function createServer(options = {}) {
       : errorBody(serviceError(message, key)));
     if (req.headers.host !== new URL(origin).host) return reject(403, '请使用本地链接。', 'ui.error.localLink');
     if (serveApp(req, res, pathname)) return;
-    if (req.method === 'GET' && route === '/') return send(200, fs.readFileSync(path.join(__dirname, 'pages/local-login.html')), 'text/html; charset=utf-8');
+    if (req.method === 'GET' && ['/legacy', '/legacy/'].includes(route)) return send(200, fs.readFileSync(path.join(__dirname, 'pages/local-login.html')), 'text/html; charset=utf-8');
     const scripts = { '/assets/i18n.mjs': 'i18n/i18n.mjs', '/assets/local-login.mjs': 'pages/local-login.mjs',
       '/assets/results.mjs': 'components/results.mjs', '/assets/sidebar.mjs': 'agent/sidebar.mjs',
       '/assets/workspace.mjs': 'workspace/workspace.mjs', '/assets/contract.mjs': 'workspace/contract.mjs', '/components/results.mjs': 'components/results.mjs' };

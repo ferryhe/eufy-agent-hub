@@ -1,6 +1,6 @@
 # React interface validation
 
-Issue #36 adds the opt-in `/app/recordings` workbench. The default `/` interface is unchanged.
+Issue #36 introduced the opt-in `/app/recordings` workbench. Following Issue #40's cutover, `/` serves React and `/legacy/` provides the original page fallback.
 
 ## L1 browser parity
 

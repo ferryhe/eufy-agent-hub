@@ -116,7 +116,7 @@ const contract = {
         .map(name => [name, { type: 'integer', minimum: 0 }]))),
     }),
     normalizedWindow: window, device, discovery, artifact, job,
-    error: object({ error, discovery }, ['error']),
+    error: object({ error, discovery, live: { $ref: '#/definitions/live' } }, ['error']),
     session: object({ authenticated: { type: 'boolean' }, phase: string, captcha: nullableString, busy: { type: 'boolean' }, residentEpoch: nonempty, loginUrl: { const: '/api/v1/session/login' }, verificationUrl: { const: '/api/v1/session/verify' }, logoutUrl: { const: '/api/v1/session/logout' } },
       ['authenticated', 'phase', 'captcha', 'busy', 'residentEpoch', 'loginUrl', 'verificationUrl', 'logoutUrl']),
     devices: object({ devices: array(device), discovery }), deviceResponse: object({ device, discovery }),

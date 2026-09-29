@@ -2,11 +2,12 @@
 
 The resident [recording API v1](v1.md) now provides the stable device → recording ranges → durable export job → status/artifact path for CLI and Agent clients. Its machine-checkable contract is served at `/api/v1/contract`. The routes below remain the existing page protocol.
 
-`legacy-recording-routes.cjs` migrates the original page protocol. These routes serve the fixed page and **are not a stable v1 Agent API**. Start the local-only service with `node interface/server.cjs`.
+`legacy-recording-routes.cjs` keeps the original page protocol for `/legacy/`. Its recording routes **are not a stable v1 Agent API**. Start the local-only service with `node interface/server.cjs`.
 
 | Method | Path | Purpose / request |
 | --- | --- | --- |
-| GET | `/` | Fixed login and recording page |
+| GET | `/` | React interface |
+| GET | `/legacy/` | Original login and recording page fallback |
 | GET | `/status` | Login state, device list, and `busy` |
 | POST | `/login` | `{email,password,country}`, for example region `CA` |
 | POST | `/verify` | `{code}`, an email verification code or CAPTCHA answer |

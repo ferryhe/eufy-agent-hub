@@ -2,7 +2,7 @@
 
 ## [api] Build a persistent service and structured v1 API
 
-Existing: In-memory sessions and legacy login, event-query and download routes.
+Current: Durable single-account session save/restore and legacy login, event-query and download routes. The earlier in-memory-only state was superseded by the session lifecycle delivery; see [auth documentation](../../capabilities/auth/README.md).
 Gap: The current interface serves a single-page prototype and has no stable Agent/CLI contract.
 Scope: Reuse capabilities to expose sessions, devices, capabilities, recording ranges, export jobs and artifacts, keeping interface and business logic separate.
 Acceptance: Provide request/response definitions that can be validated; distinguish login-required, unsupported, offline and no-recording outcomes; use stable error codes; immediately return a `jobId` for long jobs; preserve working login flows; cover session status through jobs and file access with integration tests.

@@ -526,6 +526,145 @@ async function playbackBrowserFixture(t,units,{queryDelayMs=0,secondCamera=false
     rejectNextRange:()=>{rejectRanges++},end:()=>activeControl?.end(),stall:()=>activeControl?.stall()};
 }
 
+async function liveBrowserFixture(t,{failStartupCleanupAttempts=0}={}){
+  const {DeviceType,CommandName}=require('../../adapters/eufy'),{PassThrough}=require('node:stream')
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'eufy-browser-live-'))
+  const raw=[
+    {device_sn:'base',device_name:'Synthetic Base',device_model:'T8030',device_type:DeviceType.HB3,local_ip:'192.0.2.1',main_sw_version:'b1',sec_sw_version:'b2'},
+    {device_sn:'camera',device_name:'Synthetic camera',parent_sn:'base',device_model:'T8600',device_type:DeviceType.PROFESSIONAL_247,device_channel:0,main_sw_version:'c1',sec_sw_version:'c2'},
+    {device_sn:'unknown-camera',device_name:'Unknown camera',parent_sn:'base',device_model:'OTHER',device_type:999,device_channel:1,main_sw_version:'x1',sec_sw_version:'x2'},
+  ]
+  const session={api:{getDevsListDecrypted:async()=>({devices:raw})},authenticated:true,state:{phase:'connected',devices:[],diagnostics:[],message:'Connected.'},isAuthenticated(){return this.authenticated},restore:async()=>{},close(){}}
+  const calls={connect:0,start:0,stop:0,close:0,decoderClose:0,frames:0}
+  let cleanupFailuresRemaining=failStartupCleanupAttempts
+  const jpeg=Buffer.from('/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYwLjMxLjEwMgD/2wBDAAgEBAQEBAUFBQUFBQYGBgYGBgYGBgYGBgYHBwcICAgHBwcGBgcHCAgICAkJCQgICAgJCQoKCgwMCwsODg4RERT/xABNAAEBAAAAAAAAAAAAAAAAAAAABwEBAQEAAAAAAAAAAAAAAAAAAAUHEAEAAAAAAAAAAAAAAAAAAAAAEQEAAAAAAAAAAAAAAAAAAAAA/8AAEQgAGAAgAwEiAAIRAAMRAP/aAAwDAQACEQMRAD8AjgDf0sAAAAAB/9k=','base64')
+  let browser
+  const createConnection=()=>{
+    const station=new EventEmitter(),p2p={connected:false,isConnected(){return this.connected},isCurrentlyStreaming(){return false},setStreamTimeouts(){}}
+    let streaming=false
+    Object.assign(station,{p2pSession:p2p,getSerial:()=> 'base',getModel:()=> 'T8030',isLiveStreaming:()=>streaming,
+      startLivestream(){calls.start++;streaming=true;queueMicrotask(()=>{station.emit('command result',station,{channel:0,customData:{command:{name:CommandName.DeviceStartLivestream}},return_code:failStartupCleanupAttempts?7:0});station.emit('livestream start',station,0,{videoCodec:0},new PassThrough(),new PassThrough())})},
+      stopLivestream(){calls.stop++;streaming=false;queueMicrotask(()=>station.emit('command result',station,{channel:0,customData:{command:{name:CommandName.DeviceStopLivestream}},return_code:0}))},
+    })
+    return {station,camera:{getSerial:()=> 'camera',getModel:()=> 'T8600',getStationSerial:()=> 'base',getChannel:()=>0},
+      async connect(){calls.connect++;p2p.connected=true},async close(){calls.close++;p2p.connected=false}}
+  }
+  const createDecoder=({onFrame})=>{let closed=false;const frame=()=>{if(!closed){calls.frames++;onFrame(jpeg)}};frame();const timer=setInterval(frame,120);return {async close(){calls.decoderClose++;if(cleanupFailuresRemaining>0){cleanupFailuresRemaining--;throw new Error('synthetic cleanup failure')}closed=true;clearInterval(timer)}}}
+  const server=createServer({port:0,session,recordings:{close(){}},outputRoot:root,live:{createConnection,createDecoder,startupMs:2000,attachMs:1000,authPollMs:50}})
+  await new Promise(resolve=>server.start(resolve))
+  t.after(async()=>{if(browser)await browser.close();const shutdown=server.shutdown();server.closeAllConnections?.();server.close();await shutdown;fs.rmSync(root,{recursive:true,force:true})})
+  return {url:`http://127.0.0.1:${server.address().port}`,server,calls,setBrowser:value=>{browser=value}}
+}
+
+test('Chromium Live refuses unknown capability and keeps one bounded resident media owner through preference rerenders and explicit stop',async t=>{
+  const f=await liveBrowserFixture(t),browser=await chromium.launch({headless:true});f.setBrowser(browser)
+  for(const view of [
+    {width:1440,height:900,locale:'en',title:'Live preview',camera:'Camera',attemptable:'Can attempt preview',other:'Other devices (preview unavailable)',unknown:'unknown-camera',unknownStatus:'Unknown capability: preview launch is disabled.',start:'Start live preview',stop:'Stop preview',stopped:'Stopped and cleaned up.'},
+    {width:390,height:844,locale:'zh-CN',title:'实时预览',camera:'摄像头',attemptable:'可尝试预览',other:'其他设备（无法启动预览）',unknown:'unknown-camera',unknownStatus:'能力未知：已禁用预览启动。',start:'启动实时预览',stop:'停止预览',stopped:'已停止并完成清理。'},
+  ]){
+    const context=await browser.newContext({viewport:{width:view.width,height:view.height},locale:view.locale});
+    await context.addInitScript(locale=>localStorage.setItem('eufy-agent-hub.language',locale),view.locale)
+    const page=await context.newPage(),requests=[]
+    page.on('request',request=>{const url=new URL(request.url());if(url.pathname.startsWith('/api/v1/live-sessions'))requests.push({method:request.method(),path:url.pathname})})
+    await page.goto(f.url+'/app/live');await page.getByRole('heading',{name:view.title}).waitFor()
+    await page.getByLabel(view.camera).locator('optgroup').nth(1).waitFor({state:'attached'})
+    assert.deepEqual(await page.getByLabel(view.camera).locator('optgroup').evaluateAll(groups=>groups.map(group=>group.label)),[view.attemptable,view.other])
+    assert.equal(await page.getByLabel(view.camera).locator('optgroup').first().locator('option').first().getAttribute('value'),'camera')
+    assert.equal(requests.some(item=>item.method==='POST'&&item.path==='/api/v1/live-sessions'),false,'mount must not start a camera')
+    assert.equal(requests.some(item=>item.path.endsWith('/media')),false,'mount must not attach a media consumer')
+    await page.getByLabel(view.camera).selectOption(view.unknown)
+    await page.getByText(view.unknownStatus,{exact:true}).waitFor()
+    assert.equal(await page.getByRole('button',{name:view.start}).isDisabled(),true)
+    assert.equal(requests.some(item=>item.method==='POST'&&item.path==='/api/v1/live-sessions'),false)
+    await page.getByLabel(view.camera).selectOption('camera')
+    await page.getByText(/Protocol hint:|协议提示：/).waitFor()
+    await page.getByLabel(/Maximum duration|最长时长/).fill('8')
+    const startedResponse=page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/v1/live-sessions'&&response.status()===201)
+    await page.getByRole('button',{name:view.start}).click()
+    const image=page.locator('.live-video');await image.waitFor({state:'visible'})
+    await page.waitForFunction(()=>{const image=document.querySelector('.live-video');return Boolean(image?.complete&&image.naturalWidth>0)})
+    const opened=await (await startedResponse).json()
+    assert.ok(await page.evaluate(()=>{const image=document.querySelector('.live-video'),rect=image.getBoundingClientRect();return rect.width<=960&&rect.width<=innerWidth&&document.documentElement.scrollWidth<=innerWidth}))
+    assert.equal(requests.filter(item=>item.method==='POST'&&item.path==='/api/v1/live-sessions').length,1)
+    assert.equal(requests.filter(item=>item.method==='GET'&&item.path.endsWith('/media')).length,1)
+    assert.ok(opened?.live?.sessionId)
+    const duplicateMedia=await page.request.get(`${f.url}${opened.live.media.url}`)
+    assert.equal(duplicateMedia.status(),409);assert.equal((await duplicateMedia.json()).error.code,'LIVE_CLIENT_CONFLICT')
+    const newStart=await page.request.post(f.url+'/api/v1/live-sessions',{headers:{Origin:f.url},data:{requestId:`other-${view.width}`,serial:'camera',maxDurationMs:1000}})
+    assert.equal(newStart.status(),409);assert.equal((await newStart.json()).error.code,'SERVICE_BUSY')
+    const exportConflict=await page.request.post(f.url+'/api/v1/exports',{headers:{Origin:f.url},data:{requestId:`export-${view.width}`,serial:'camera',day:'2026-08-27',start:'16:30',end:'16:31',timezone:'America/Toronto'}})
+    assert.equal(exportConflict.status(),409);assert.equal((await exportConflict.json()).error.code,'SERVICE_BUSY')
+    const current=await page.request.get(f.url+'/api/v1/session');assert.equal((await current.json()).busy,true)
+    await page.locator('header select').selectOption(view.locale)
+    await page.locator('.controls button').click()
+    await page.waitForTimeout(300)
+    assert.equal(requests.filter(item=>item.method==='POST'&&item.path==='/api/v1/live-sessions').length,1,'language/theme rerenders keep request identity')
+    assert.equal(requests.filter(item=>item.method==='GET'&&item.path.endsWith('/media')).length,1,'status polling must not open a second media consumer')
+    await page.getByRole('button',{name:view.stop}).click()
+    await page.getByText(view.stopped,{exact:true}).waitFor()
+    assert.equal(f.calls.start,view.width===1440?1:2)
+    assert.equal(f.calls.stop,view.width===1440?1:2)
+    assert.equal(f.calls.decoderClose,view.width===1440?1:2)
+    assert.equal(f.calls.close,view.width===1440?1:2)
+    assert.equal((await (await page.request.get(f.url+'/api/v1/session')).json()).busy,false)
+    const preference=await page.evaluate(()=>({language:localStorage.getItem('eufy-agent-hub.language'),theme:localStorage.getItem('eufy-agent-hub.theme')}))
+    assert.deepEqual(preference,{language:view.locale,theme:'dark'})
+    await context.close()
+  }
+})
+
+test('Chromium Live route departure confirms server cleanup before showing Jobs',async t=>{
+  const f=await liveBrowserFixture(t),browser=await chromium.launch({headless:true});f.setBrowser(browser)
+  const page=await browser.newPage({viewport:{width:1440,height:900}}),started=[]
+  page.on('response',async response=>{if(response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/v1/live-sessions'&&response.status()===201)started.push(await response.json())})
+  await page.goto(f.url+'/app/live');await page.getByLabel('Camera').selectOption('camera');await page.getByRole('button',{name:'Start live preview'}).click()
+  await page.waitForFunction(()=>Boolean(document.querySelector('.live-video')?.naturalWidth))
+  await page.getByRole('button',{name:'Jobs'}).click();await page.getByRole('heading',{name:'Export task center'}).waitFor()
+  assert.equal(started.length,1);const id=started[0].live.sessionId
+  const stopped=await (await page.request.get(`${f.url}/api/v1/live-sessions/${id}`)).json()
+  assert.equal(stopped.live.state,'stopped');assert.equal(stopped.live.stopConfirmed,true);assert.equal(stopped.live.cleanupComplete,true)
+  assert.equal(f.calls.stop,1);assert.equal(f.calls.decoderClose,1);assert.equal(f.calls.close,1)
+  assert.equal((await (await page.request.get(f.url+'/api/v1/session')).json()).busy,false)
+})
+
+test('Chromium Live exposes and retries cleanup when startup fails before returning a normal session response',async t=>{
+  const f=await liveBrowserFixture(t,{failStartupCleanupAttempts:2}),browser=await chromium.launch({headless:true});f.setBrowser(browser)
+  const page=await browser.newPage({viewport:{width:1440,height:900}}),startFailure=[]
+  page.on('response',async response=>{if(response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/v1/live-sessions'&&response.status()===503)startFailure.push(await response.json())})
+  await page.goto(f.url+'/app/live');await page.getByLabel('Camera').selectOption('camera');await page.getByRole('button',{name:'Start live preview'}).click()
+  await page.getByText('Preview failed.',{exact:true}).waitFor()
+  assert.equal(startFailure.length,1);const id=startFailure[0].live.sessionId
+  assert.equal(startFailure[0].live.cleanupComplete,false)
+  await page.getByRole('button',{name:'Jobs'}).click()
+  await page.getByRole('heading',{name:'Live preview'}).waitFor()
+  await page.getByText('Cleanup is not confirmed. The resident still owns this session; retry Stop before leaving this page.',{exact:true}).waitFor()
+  assert.equal(f.calls.decoderClose,2,'departure retry should be attempted and remain pending')
+  await page.getByRole('button',{name:'Stop preview'}).click()
+  await page.waitForFunction(async url=>{const response=await fetch(url+'/api/v1/session');return !(await response.json()).busy},f.url)
+  const recovered=await (await page.request.get(`${f.url}/api/v1/live-sessions/${id}`)).json()
+  assert.equal(recovered.live.cleanupComplete,true)
+  assert.equal((await (await page.request.get(f.url+'/api/v1/session')).json()).busy,false)
+  await page.getByRole('button',{name:'Jobs'}).click();await page.getByRole('heading',{name:'Export task center'}).waitFor()
+})
+
+test('Chromium Live expiry is resident enforced and does not auto-renew',async t=>{
+  const f=await liveBrowserFixture(t),browser=await chromium.launch({headless:true});f.setBrowser(browser)
+  const page=await browser.newPage({viewport:{width:390,height:844}}),starts=[]
+  page.on('response',async response=>{if(response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/v1/live-sessions'&&response.status()===201)starts.push(await response.json())})
+  await page.goto(f.url+'/app/live');await page.getByLabel('Camera').selectOption('camera');await page.getByLabel('Maximum duration (seconds)').fill('1');await page.getByRole('button',{name:'Start live preview'}).click()
+  await page.getByText('Session expired; resident cleanup is confirmed.',{exact:true}).waitFor({timeout:8000})
+  await page.waitForTimeout(1300)
+  assert.equal(starts.length,1);assert.equal(f.calls.start,1);assert.equal(f.calls.stop,1);assert.equal(f.calls.close,1)
+  assert.equal((await (await page.request.get(f.url+'/api/v1/session')).json()).busy,false)
+  const restarted=page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/v1/live-sessions')
+  await page.getByRole('button',{name:'Start live preview'}).click()
+  const next=await restarted;assert.equal(next.status(),201,'manual restart after expiry needs a fresh request identity')
+  assert.notEqual((await next.json()).live.sessionId,starts[0].live.sessionId)
+  await page.waitForFunction(()=>Boolean(document.querySelector('.live-video')?.naturalWidth))
+  await page.getByRole('button',{name:'Stop preview'}).click();await page.getByText('Stopped and cleaned up.',{exact:true}).waitFor()
+  assert.equal(f.calls.start,2);assert.equal(f.calls.stop,2);assert.equal(f.calls.close,2)
+})
+
 test('Chromium status polling does not reload device inventory until explicit refresh',async t=>{
   const f=await playbackBrowserFixture(t,[]);let browser;t.after(async()=>{if(browser)await browser.close()});browser=await chromium.launch({headless:true});
   const page=await browser.newPage();let statusPolls=0,deviceFetches=0;

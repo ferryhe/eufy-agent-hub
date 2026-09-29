@@ -13,6 +13,7 @@ function fixture(t, options = {}) {
   const session = { api: {}, isAuthenticated: () => true };
   const p2p = new EventEmitter(), station = new EventEmitter(), calls = [], streams = [];
   let decoder, connected = false;
+  let closeFailures = options.closeFailures ?? (options.closeError ? Number.POSITIVE_INFINITY : 0);
   p2p.isConnected = () => connected; p2p.isCurrentlyStreaming = () => false;
   Object.assign(station, { p2pSession: p2p, getSerial: () => 'base', getModel: () => 'T8030',
     getSoftwareVersion: () => 'b1', getHardwareVersion: () => 'hardware', isLiveStreaming: () => connected,
@@ -37,7 +38,7 @@ function fixture(t, options = {}) {
   const connection = { station, camera: { getSerial: () => 'camera', getStationSerial: () => 'base',
     getModel: () => 'T8600', getChannel: () => 1 },
     async connect() { calls.push('connect'); await options.connectGate; if (options.connectError) throw new Error('private-connection'); connected = true; },
-    async close() { calls.push('close'); await options.closeGate; if (options.closeError) throw new Error('private-close'); connected = false; },
+    async close() { calls.push('close'); await options.closeGate; if (closeFailures > 0) { closeFailures--; throw new Error('private-close'); } connected = false; },
   };
   const live = new LiveSessions({ session, resolveDevice: async serial => { await options.inventoryGate; return serial === 'camera' ? device : null; },
     createConnection: () => connection, startupMs: 50, commandMs: 30, attachMs: 1000, authPollMs: 20,
@@ -129,6 +130,22 @@ test('media disconnect owns cleanup; a duplicate consumer returns stable conflic
   assert.equal(f.live.get(started.sessionId).state, 'stopped'); assert.equal(f.live.isBusy(), false);
 });
 
+test('media disconnect retries transient cleanup while retaining admission', async t => {
+  const f = fixture(t, { closeFailures: 1 }), started = await f.start(), res = new PassThrough();
+  res.writeHead = () => {}; res.resume(); f.live.attach(started.sessionId, res); res.destroy();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(f.live.get(started.sessionId).state, 'failed');
+  assert.equal(f.live.isBusy(), true);
+  await assert.rejects(f.start('next'), { code: 'SERVICE_BUSY' });
+  const deadline = Date.now() + 3000;
+  while (f.live.isBusy() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(f.live.get(started.sessionId).cleanupComplete, true);
+  assert.equal(f.live.isBusy(), false);
+  const next = await f.start('next');
+  assert.notEqual(next.sessionId, started.sessionId);
+  await f.live.stop(next.sessionId);
+});
+
 for (const [scenario, code, status] of [['first-frame timeout', 'LIVE_MEDIA_TIMEOUT', 504],
   ['decoder failure', 'LIVE_DECODER_FAILED', 502], ['auth expiry', 'UNAUTHENTICATED', 401]]) {
   test(`${scenario} after start ack awaits matching stop and every cleanup stage`, async t => {
@@ -203,7 +220,7 @@ for (const options of [{ noStopAck: true }, { stopReject: true }]) {
   });
 }
 
-test('connection close, stop timeout and cleanup failure have distinct outcomes', async t => {
+test('connection close, stop timeout and retryable cleanup failure have distinct outcomes', async t => {
   const f = fixture(t), started = await f.start();
   f.station.emit('close'); await f.live.closeActive();
   assert.equal(f.live.get(started.sessionId).error.code, 'LIVE_CONNECTION_LOST');
@@ -212,9 +229,12 @@ test('connection close, stop timeout and cleanup failure have distinct outcomes'
   const timeout = fixture(t, { noStopAck: true }), opened = await timeout.start();
   const stopped = await timeout.live.stop(opened.sessionId);
   assert.equal(stopped.error.code, 'LIVE_COMMAND_TIMEOUT'); assert.equal(stopped.cleanupComplete, true);
-  const broken = fixture(t, { closeError: true }), active = await broken.start();
+  const broken = fixture(t, { closeFailures: 1 }), active = await broken.start();
   await assert.rejects(broken.live.stop(active.sessionId), { code: 'LIVE_CLEANUP_FAILED' });
   assert.equal(broken.live.isBusy(), true); assert.equal(broken.live.get(active.sessionId).cleanupComplete, false);
+  const recovered = await broken.live.stop(active.sessionId);
+  assert.equal(recovered.cleanupComplete, true); assert.equal(recovered.state, 'failed'); assert.equal(broken.live.isBusy(), false);
+  assert.deepEqual(broken.calls.slice(-4), ['decoder-close', 'close', 'decoder-close', 'close']);
 });
 
 test('shutdown cancels startup and waits for a late connection before releasing admission', async t => {

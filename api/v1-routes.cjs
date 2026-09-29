@@ -120,6 +120,11 @@ function installV1Routes(server, session, options) {
         try {
           const started = await live.start(data); completed = true;
           if (!res.destroyed) return send(reused ? 200 : 201, { live: started, reused });
+        } catch (error) {
+          completed = true;
+          const owner = live.getRequest(data.requestId);
+          if (owner && !owner.cleanupComplete) error.live = owner;
+          throw error;
         } finally { res.off('close', disconnected); release(); }
         return;
       }
@@ -282,6 +287,7 @@ function installV1Routes(server, session, options) {
       throw fault(404, 'NOT_FOUND', 'Unknown v1 endpoint.');
     } catch (error) {
       if (!res.headersSent) send(error.status || 500, { error: { code: error.status ? error.code : 'INTERNAL_ERROR', message: error.message },
+        ...(error.live ? { live: error.live } : {}),
         ...(error.discovery ? { discovery: error.discovery } : {}) });
       else res.destroy();
     }

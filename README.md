@@ -6,7 +6,7 @@
 
 A local eufy recording application with reusable capabilities, a resident HTTP API, a CLI, and an optional recording Agent. The browser provides event-recording browsing, an Agent sidebar, shared result components and a persistent workspace, with English and Simplified Chinese interfaces.
 
-**Phase 1 and Phase 2 delivery is merged through PR #32.** The original 15 issues (#1–#14 and #16) are closed as of 2026-09-13. Completion means their scoped acceptance criteria were met; it does not establish gap-free exports or support for every device. See [delivery history](#delivery-history) and [hardware evidence and limits](#hardware-evidence-and-limits).
+**Phase 1 and Phase 2 delivery is merged through PR #32.** React migration M1–M4 and M6 is merged in PRs #41–#45. M5/#40 adds bounded Live preview and changes `/` to the React interface in PR #46; `/legacy/` remains the fallback. The final PR review and CI gate still apply. The original 15 issues (#1–#14 and #16) are closed as of 2026-09-13. Completion means scoped acceptance criteria were met; it does not establish gap-free exports or support for every device. See [delivery history](#delivery-history) and [hardware evidence and limits](#hardware-evidence-and-limits).
 
 ### What is available, and where
 
@@ -15,14 +15,14 @@ A local eufy recording application with reusable capabilities, a resident HTTP A
 | Login, verification, logout and session restoration | Browser, CLI, v1 session API | One resident account; expired or invalid saved sessions require login |
 | Device discovery and capability matrix | Browser inventory, CLI, v1 devices API | Camera/HomeBase/channel/firmware scope; discovery completeness remains unknown |
 | Event search, download and saved MP4 playback | **Browse recordings**, legacy HTTP routes | An empty event index does not prove there is no continuous footage |
-| Continuous recording ranges and export | CLI, v1 API, recording Agent | Durable jobs, conversion and full decode/coverage checks; results can be partial |
-| Job recovery, cancellation and explicit retry | Resident job service; cancel/retry via v1 API | Interrupted capture is not resumed; no dedicated CLI cancel/retry commands or full browser task center |
-| Historical playback pause/resume | v1 playback-session control API | Accepted public hardware evidence is for 1× pause/resume; no browser media URL or playback-control UI |
-| Live video | v1 live-session API and MJPEG media URL | Video-only bounded preview; no dedicated Live page or CLI/Agent Live command |
+| Continuous recording ranges and export | **Browse recordings** (`/app/recordings`), CLI, v1 API, recording Agent | Durable jobs, conversion and full decode/coverage checks; results can be partial |
+| Job recovery, cancellation and explicit retry | **`/app/jobs`**, resident job service, CLI and v1 API | Interrupted capture is not resumed; no dedicated CLI cancel/retry commands |
+| Historical browser playback | **`/app/recordings`**, v1 playback-session API | Bounded in-index preview with pause/resume and serialized seek; exact hardware evidence remains device/firmware scoped |
+| Live video | **`/app/live`** or v1 live-session API | On-demand, video-only, 1–60 seconds, up to 5 fps/960 px; fresh browser hardware evidence is scoped to one T8600/T8030 path |
 | Natural-language export | **Ask assistant** sidebar or terminal Agent | Requires model configuration; ordinary browsing does not |
 | Shared results and dynamic workspace | Both browser views | Device/timeline/job/player components; pin, reorder and restore references |
 
-The fixed event-search form has no direct continuous-export control. The Agent can submit continuous exports, and a workspace timeline backed by an Agent range receipt has an export action. The public [v1 contract](api/v1.md) and [legacy page routes](api/README.md) are separate interfaces.
+The original event-search form at `/legacy/` has no direct continuous-export control. In React **Browse recordings**, choose **Check continuous availability** and **Export requested continuous window**; this needs no Agent model configuration. The Agent can also submit continuous exports, and a workspace timeline backed by an Agent range receipt has an export action. The public [v1 contract](api/v1.md) and [legacy page routes](api/README.md) are separate interfaces. React migration status and acceptance evidence are tracked in the [feature-parity checklist](docs/FEATURE_PARITY.md); use `/legacy/` to return to the old page.
 
 ### Quick start
 
@@ -38,7 +38,9 @@ npm start
 
 `setup` installs the bundled protocol library's locked dependencies; `build` compiles its source and copies assets. Automated tests do not need a real account/HomeBase; optional media tests depend on local tool configuration.
 
-Open **http://127.0.0.1:3187/** for the legacy interface, or **http://127.0.0.1:3187/app/** for the opt-in React shell. On first use, sign in with your eufy account region (the tested account uses `CA`) and complete any image/email challenge. Keep the resident service running while using the page, CLI or Agent. The service listens on `127.0.0.1` only and checks the actual Host and browser Origin.
+Open **http://127.0.0.1:3187/** for the React interface or **http://127.0.0.1:3187/legacy/** to roll back to the old page. Deep links such as `/app/live` and `/app/jobs` remain available. On first use, sign in with your eufy account region (the tested account uses `CA`) and complete any image/email challenge. Keep the resident service running while using the page, CLI or Agent. The service listens on `127.0.0.1` only and checks the actual Host and browser Origin.
+
+The Chromium integration suite is separate from `npm test`: run `npx playwright install --with-deps chromium` and then `npm run browser:test`.
 
 Completed login sessions are saved to ignored `output/auth/session.json` by default and validated on restart. **A normal restart does not always require another login.** Expired, malformed or unusable saved sessions do. Passwords and pending challenges are not saved. **Sign out** clears the saved session. `EUFY_SESSION_PATH` selects a private durable session-file location; treat that file as a credential. See [session lifecycle](capabilities/auth/README.md).
 
@@ -72,7 +74,7 @@ Replace these example paths with your installed executables. Login and device di
 #### Browser workflow
 
 1. Sign in, then choose **Browse recordings**. Select a camera, date and time interval to find event recordings, download a result and play the saved MP4.
-2. To request a continuous interval, configure the Agent below and choose **Ask assistant**, or use the CLI/API. Specify the camera, calendar date, start/end and timezone; ambiguous requests require clarification.
+2. To request a continuous interval, choose **Check continuous availability**, then **Export requested continuous window** in **Browse recordings**. This does not require an Agent model. Alternatively, use **Ask assistant** with a configured Agent, or the CLI/API. Specify the camera, calendar date, start/end and timezone; ambiguous Agent requests require clarification.
 3. Follow the shared job card and inspect the actual coverage and validation result. A playable `partial` output remains incomplete.
 4. Pin useful workspace results and reorder them. Browser refresh restores references and observes existing resident work without another model call.
 
@@ -117,13 +119,14 @@ The resident owns exports independently of clients. Jobs on one HomeBase execute
 
 | Operation | v1 endpoint / behavior |
 |---|---|
+| List retained jobs | `GET /api/v1/jobs`; follow `nextCursor` for more pages |
 | Inspect a known job | `GET /api/v1/jobs/:jobId` |
 | Cancel queued/running work | `POST /api/v1/jobs/:jobId/cancel` with `{}`; active cancellation completes after cleanup |
 | Explicitly retry failed/cancelled work | `POST /api/v1/jobs/:jobId/retry` with `{"requestId":"NEW_UNIQUE_ID"}`; creates a new job and preserves the old one |
 | Start Live | `POST /api/v1/live-sessions` with `{"requestId":"NEW_UNIQUE_ID","serial":"CAMERA_SERIAL","maxDurationMs":60000}` |
 | Observe / view / stop Live | `GET /api/v1/live-sessions/:sessionId`, `GET /api/v1/live-sessions/:sessionId/media`, `POST /api/v1/live-sessions/:sessionId/stop` with `{}` |
 
-POSTs use `Content-Type: application/json` and browser callers must use the resident's matching Origin. There is currently no public endpoint to list all jobs; retain returned job IDs.
+POSTs use `Content-Type: application/json` and browser callers must use the resident's matching Origin. `GET /api/v1/jobs` lists retained resident jobs with pagination; follow `nextCursor`. Retain returned job IDs for direct lookup.
 
 On restart, safely queued jobs retain identity and order; execution still requires a valid session. Previously running capture becomes `failed` with `JOB_INTERRUPTED`, or `cancelled` if cancellation intent was saved. It is not automatically replayed or resumed. Inspect retained evidence and explicitly retry where appropriate. Existing job/artifact reads remain available after logout. Partial media is represented by `result.outcome: "partial"` with job `state: "failed"`; only affirmative coverage and validation can yield complete success. See [job lifecycle and recovery](jobs/README.md).
 
@@ -137,7 +140,7 @@ Evidence is for a **CA account, T8030 HomeBase 3 and specific T8600 cameras on t
 |---|---|---|
 | Continuous 20-minute export | A real 2026-08-27 16:30–16:50 Toronto export and a later Agent-to-hardware run produced playable, fully decodable media | **PARTIAL**: 51 video gaps over 250 ms, largest 4.067 s; no gap-free/lossless claim ([record](agent/VALIDATION.md)) |
 | Playback controls | Real 1× start, six-second stationary pause, resume progress and stop ([PR #31](https://github.com/ferryhe/eufy-agent-hub/pull/31)) | Accepted public scope authorizes speed 1; no verified public 2×/4×/8×/16× claim. Control API drains media; it provides no browser playback stream ([contract](capabilities/recordings/PLAYBACK_SESSIONS.md)) |
-| Live video | 2026-09-12 acceptance on one exact T8600/T8030 scope: 29 sampled frames fully decoded, confirmed stop, resource cleanup and same-HomeBase export conflict | Video-only MJPEG, up to 5 fps and 960 px wide, 1–60 s sessions; not continuous surveillance. Other devices/firmware, talkback and RTSP remain unverified ([record and lifecycle](capabilities/live/README.md)) |
+| Live video | The 2026-09-12 API proof covers one exact T8600/T8030 scope. On 2026-09-29, the React Live page decoded a 960×540 browser frame on a T8600/T8030/channel 2 path; explicit Stop confirmed cleanup. A second bounded run decoded 153 frames and ended with confirmed stop and all four resource-closure flags true. Exact serial binding is kept only in ignored local evidence. | Video-only MJPEG, up to 5 fps and 960 px wide, 1–60 s sessions; not continuous surveillance. Other devices/firmware, talkback and RTSP remain unverified ([record and lifecycle](capabilities/live/README.md)) |
 | Device discovery | Structured inventory, associations, capability evidence and explicit failure/retry state | Mega continuation remains unverified; successful discovery still reports `completeness: "unknown"` ([discovery contract](capabilities/devices/DISCOVERY.md)) |
 
 A protocol hint permits only the bounded operations allowed by that capability's contract. Unknown/unsupported Live refuses execution; playback controls require an exact persisted verified record. Installing this repository does not create private hardware evidence or automatically promote a device to verified. Event indexes, end frames, file existence and successful decoding alone do not establish continuous coverage. Video-content recognition is not implemented.
@@ -184,7 +187,7 @@ Based on the MIT-licensed [bropat/eufy-security-client](https://github.com/bropa
 
 本地运行的 eufy 录像应用，包含可复用能力、常驻 HTTP API、CLI 和可选的录像 Agent。浏览器已提供事件录像查询、Agent 侧栏、共享结果组件和可恢复工作区，支持英文和简体中文。
 
-**Phase 1、Phase 2 已交付，代码合并至 PR #32。** 截至 2026-09-13，原有 15 个 Issue（#1–#14、#16）均已关闭。这表示完成各项约定范围的验收，不代表已实现无缺口导出或验证所有设备。交付记录见下方，实机限制单独列明。
+**Phase 1、Phase 2 已交付，代码合并至 PR #32。** React 迁移的 M1–M4 和 M6 已在 PR #41–#45 合并。M5/#40 在 PR #46 加入有限时长的 Live 预览，并将 `/` 切换到 React；`/legacy/` 保留旧版回退。PR 最终审阅与 CI 门槛仍须通过。原有 15 个 Issue（#1–#14、#16）截至 2026-09-13 均已关闭。这表示完成各项约定范围的验收，不代表已实现无缺口导出或验证所有设备。交付记录见下方，实机限制单独列明。
 
 ### 现在能做什么，从哪里操作
 
@@ -193,14 +196,14 @@ Based on the MIT-licensed [bropat/eufy-security-client](https://github.com/bropa
 | 登录、验证码、退出和会话恢复 | 页面、CLI、v1 会话 API | 单账号常驻会话；保存的会话失效时需要登录 |
 | 设备发现与能力矩阵 | 页面设备列表、CLI、v1 设备 API | 按摄像头/HomeBase/通道/固件记录；设备发现完整性仍未知 |
 | 事件查询、下载、已保存 MP4 播放 | **浏览录像**及旧版 HTTP 路由 | 没有事件不等于没有连续录像 |
-| 连续录像范围查询与导出 | CLI、v1 API、录像 Agent | 持久化任务、转换、全片解码及覆盖校验；结果可能为 partial |
-| 任务恢复、取消、显式重试 | 常驻任务服务；取消/重试使用 v1 API | 中断捕获不能续传；CLI 尚无取消/重试子命令，页面尚无完整任务中心 |
-| 历史回放暂停/恢复 | v1 回放会话控制 API | 公开验收为 1× 暂停/恢复；没有浏览器媒体地址或回放控制页面 |
-| 实时视频 | v1 Live 会话 API 和 MJPEG 地址 | 有时限的纯视频预览；暂无专用 Live 页面或 CLI/Agent Live 命令 |
+| 连续录像范围查询与导出 | **浏览录像**（`/app/recordings`）、CLI、v1 API、录像 Agent | 持久化任务、转换、全片解码及覆盖校验；结果可能为 partial |
+| 任务恢复、取消、显式重试 | **`/app/jobs`**、常驻任务服务、CLI 和 v1 API | 中断捕获不能续传；CLI 尚无取消/重试子命令 |
+| 历史浏览器回放 | **`/app/recordings`**、v1 回放会话 API | 在索引范围内有限预览，支持暂停/恢复和串行跳转；实机证据仅适用于对应设备/固件范围 |
+| 实时视频 | **`/app/live`** 或 v1 Live 会话 API | 按需启动的纯视频预览，1–60 秒、最高 5 fps/960 像素；新浏览器实机证据仅适用于一个 T8600/T8030 范围 |
 | 自然语言导出 | **询问助手**侧栏或终端 Agent | 需要配置模型；普通浏览不需要 |
 | 共享结果与动态工作区 | 两种页面模式 | 设备、时间轴、任务、播放器组件；支持固定、排序和引用恢复 |
 
-固定事件查询表单没有直接导出连续录像的按钮。Agent 可以提交连续导出；工作区中由 Agent 范围查询凭据生成的时间轴也提供导出操作。[v1 契约](api/v1.md)与[旧页面路由](api/README.md)是不同接口。
+`/legacy/` 的旧事件查询表单没有直接导出连续录像的按钮。在 React **浏览录像**中，选择**检查连续录像范围**，再选择**导出请求的连续录像时段**；无需配置 Agent 模型。Agent 也可以提交连续导出；工作区中由 Agent 范围查询凭据生成的时间轴也提供导出操作。[v1 契约](api/v1.md)与[旧页面路由](api/README.md)是不同接口。React 迁移状态和验收记录见[功能对照清单](docs/FEATURE_PARITY.md)；使用 `/legacy/` 可返回旧版页面。
 
 ### 快速开始
 
@@ -216,7 +219,9 @@ npm start
 
 `setup` 按锁文件安装协议库依赖，`build` 编译协议库并复制资源。自动测试不需要真实账号/HomeBase；部分媒体测试需要配置本机工具。
 
-打开 **http://127.0.0.1:3187/** 使用旧界面，或打开 **http://127.0.0.1:3187/app/** 使用可选 React 界面；需要回退时重新打开 `/`。首次使用时填写账号所属地区（已测试账号为 `CA`），完成登录和可能出现的图片/邮件验证码。页面、CLI 和 Agent 使用期间保持常驻服务运行。服务仅监听 `127.0.0.1`，并检查实际 Host 和浏览器 Origin。
+打开 **http://127.0.0.1:3187/** 使用 React 界面，或打开 **http://127.0.0.1:3187/legacy/** 回退旧版页面。`/app/live`、`/app/jobs` 等深链接仍可使用。首次使用时填写账号所属地区（已测试账号为 `CA`），完成登录和可能出现的图片/邮件验证码。页面、CLI 和 Agent 使用期间保持常驻服务运行。服务仅监听 `127.0.0.1`，并检查实际 Host 和浏览器 Origin。
+
+Chromium 浏览器集成测试与 `npm test` 分开运行：先执行 `npx playwright install --with-deps chromium`，再执行 `npm run browser:test`。
 
 登录成功后，会话默认保存到不进入 Git 的 `output/auth/session.json`，重启时会验证并尝试恢复。**正常重启不一定需要重新登录。** 保存的会话过期、损坏或不可用时才需要重新登录。密码和未完成的验证码流程不会保存；**退出登录**会清除保存的会话。可通过 `EUFY_SESSION_PATH` 指定私有、持久的位置，该文件应按登录凭据保管。详见[会话生命周期](capabilities/auth/README.md)。
 
@@ -250,7 +255,7 @@ npm start
 #### 页面操作
 
 1. 登录后选择**浏览录像**，选择摄像头、日期和时间范围，查询事件、下载片段并播放已保存的 MP4。
-2. 要导出连续时段，先按下方说明配置 Agent，再选择**询问助手**；也可使用 CLI/API。明确摄像头、日期、起止时间和时区，不明确时由 Agent 追问。
+2. 要导出连续时段，在**浏览录像**中选择**检查连续录像范围**，再选择**导出请求的连续录像时段**，无需配置 Agent 模型。也可配置 Agent 后使用**询问助手**，或使用 CLI/API。明确摄像头、日期、起止时间和时区；Agent 会追问不明确的请求。
 3. 查看共享任务卡上的进度、实际覆盖和校验结果。可播放的 `partial` 文件仍是覆盖不完整的结果。
 4. 将常用结果固定到工作区并调整顺序。刷新页面会恢复引用、查询已有任务，不会再次调用模型。
 
@@ -295,13 +300,14 @@ node --env-file=.env.local agent/main.cjs --url http://127.0.0.1:3187
 
 | 操作 | v1 接口及行为 |
 |---|---|
+| 列出保留的任务 | `GET /api/v1/jobs`；按 `nextCursor` 翻页 |
 | 查看已知任务 | `GET /api/v1/jobs/:jobId` |
 | 取消排队/运行中的任务 | `POST /api/v1/jobs/:jobId/cancel`，正文 `{}`；运行中的任务等清理完成后才成为 cancelled |
 | 显式重试失败/取消任务 | `POST /api/v1/jobs/:jobId/retry`，正文 `{"requestId":"NEW_UNIQUE_ID"}`；创建新任务并保留原任务 |
 | 启动 Live | `POST /api/v1/live-sessions`，正文 `{"requestId":"NEW_UNIQUE_ID","serial":"CAMERA_SERIAL","maxDurationMs":60000}` |
 | 查看/播放/停止 Live | `GET /api/v1/live-sessions/:sessionId`、`GET /api/v1/live-sessions/:sessionId/media`、`POST /api/v1/live-sessions/:sessionId/stop`（正文 `{}`） |
 
-POST 使用 `Content-Type: application/json`；浏览器请求的 Origin 必须匹配常驻服务。目前没有公开的全部任务列表接口，请保留返回的任务 ID。
+POST 使用 `Content-Type: application/json`；浏览器请求的 Origin 必须匹配常驻服务。`GET /api/v1/jobs` 可分页列出保留的任务，请按 `nextCursor` 翻页。保留返回的任务 ID，以便直接查询。
 
 重启后，安全排队的任务保留标识与顺序，执行仍要求有效登录。原先运行中的捕获标记为 `failed` / `JOB_INTERRUPTED`；若已保存取消意图，则标记为 `cancelled`。不会自动重放或续传，应先检查保留的证据，再按需显式重试。退出登录后仍可读取已有任务及产物。部分录像使用 `result.outcome: "partial"`、任务状态 `state: "failed"`；只有覆盖和媒体验证均明确通过才算完整成功。详见[任务生命周期](jobs/README.md)。
 
@@ -315,7 +321,7 @@ POST 使用 `Content-Type: application/json`；浏览器请求的 Origin 必须�
 |---|---|---|
 | 连续 20 分钟导出 | 2026-08-27 多伦多时间 16:30–16:50 的实机导出，以及后续 Agent 到实机流程，产出可播放且全片解码通过的视频 | **PARTIAL**：51 处超过 250 ms 的视频缺口，最大 4.067 秒；不声称无缺口或无损（[记录](agent/VALIDATION.md)） |
 | 历史回放控制 | 实机完成 1× 启动、6 秒静止暂停、恢复推进和停止（[PR #31](https://github.com/ferryhe/eufy-agent-hub/pull/31)） | 已接受的公开范围仅授权 speed 1；不声称 2×/4×/8×/16× 已公开验证。控制 API 消费媒体但不提供浏览器播放流（[契约](capabilities/recordings/PLAYBACK_SESSIONS.md)） |
-| 实时视频 | 2026-09-12 验收一个精确 T8600/T8030 范围：29 个采样帧全解码、确认停止、资源清理及同 HomeBase 导出冲突处理 | 纯视频 MJPEG，最高 5 fps、宽 960 px、会话 1–60 秒；不是持续监控。其他设备/固件、talkback、RTSP 未验证（[记录与生命周期](capabilities/live/README.md)） |
+| 实时视频 | 2026-09-12 API 证据覆盖一个精确 T8600/T8030 范围。2026-09-29 React Live 页面在一个 T8600/T8030/通道 2 范围解码 960×540 浏览器画面；手动停止确认清理。第二次限时会话解码 153 帧，停止得到确认，四项资源关闭标志均为 true。精确序列号仅保存在本机忽略的私有证据中。 | 纯视频 MJPEG，最高 5 fps、宽 960 px、会话 1–60 秒；不是持续监控。其他设备/固件、talkback、RTSP 未验证（[记录与生命周期](capabilities/live/README.md)） |
 | 设备发现 | 已提供结构化设备、关联、能力证据及明确的失败/重试状态 | Mega 后续分页未验证；成功查询仍报告 `completeness: "unknown"`（[发现契约](capabilities/devices/DISCOVERY.md)） |
 
 协议提示仅允许对应契约规定的有限尝试。Live 为 unknown/unsupported 时拒绝执行；回放控制要求精确匹配的持久化验证记录。安装仓库不会创建私人实机证据，也不会自动把设备提升为 verified。事件索引、结束帧、文件存在或解码成功，都不能单独证明连续录像完整。视频内容识别尚未实现。

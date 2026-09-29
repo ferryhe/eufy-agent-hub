@@ -24,6 +24,7 @@ class LiveSessions {
   }
   isBusy() { return Boolean(this.current && !this.current.closed); }
   hasRequest(id) { return this.requests.has(id); }
+  getRequest(id) { const c = this.requests.get(id); return c ? this.get(c.id) : null; }
   _find(id) { const c = this.sessions.get(id); if (!c) throw failure('LIVE_SESSION_NOT_FOUND'); return c; }
   get(id) {
     const c = this._find(id);
@@ -192,12 +193,12 @@ class LiveSessions {
     if (error) c.error = safeError(error);
     c.state = 'stopping'; c.controller.abort(c.error || failure('LIVE_INACTIVE'));
     for (const timer of [c.authTimer, c.durationTimer, c.attachTimer, c.mediaTimer]) clearTimeout(timer);
-    c.cleanup = Promise.resolve().then(async () => {
+    const cleanup = Promise.resolve().then(async () => {
       // A connection setup can complete after cancellation. Retain admission
       // ownership until that setup settles and its resources are also closed.
       await c.connecting?.catch(() => {});
       let cleanupError;
-      if (c.startConfirmed && c.station?.p2pSession.isConnected() && c.station.isLiveStreaming(c.connection.camera)) {
+      if (c.startConfirmed && !c.stopConfirmed && c.station?.p2pSession.isConnected() && c.station.isLiveStreaming(c.connection.camera)) {
         try { await this._command(c, 'stop', () => c.station.stopLivestream(c.connection.camera)); c.stopConfirmed = true; }
         catch (error) { c.error ||= safeError(error); }
       }
@@ -211,10 +212,23 @@ class LiveSessions {
         c.connectionClosed = true;
       } catch { cleanupError = failure('LIVE_CLEANUP_FAILED'); }
       if (cleanupError) { c.error = cleanupError; c.state = 'failed'; throw cleanupError; }
+      clearTimeout(c.retryTimer); c.retryTimer = null;
       c.closed = true; c.state = c.error ? 'failed' : 'stopped';
       c.connection = c.p2p = c.station = c.decoder = null; c.streams = []; c.listeners = [];
     });
-    return c.cleanup;
+    c.cleanup = cleanup;
+    // A failed cleanup must keep the resident admission owner, but it must not
+    // permanently memoize a rejected promise. A later stop or resident retry
+    // releases the media slot only after the still-owned resources close.
+    cleanup.catch(() => {
+      if (c.cleanup !== cleanup) return;
+      c.cleanup = null;
+      if (!c.retryTimer) {
+        c.retryTimer = setTimeout(() => { c.retryTimer = null; if (!c.closed) this._end(c); }, 1000);
+        c.retryTimer.unref?.();
+      }
+    });
+    return cleanup;
   }
   async stop(id) { const c = this._find(id); await this._dispose(c); return this.get(id); }
   async closeRequest(requestId) { const c = this.requests.get(requestId); if (c && !c.closed) await this.stop(c.id); }
