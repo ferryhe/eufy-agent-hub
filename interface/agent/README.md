@@ -1,6 +1,6 @@
 # Agent interface
 
-The local page's **Ask assistant** view runs the existing root `agent/runtime.cjs` in the resident process. Its tools call the actual listening HTTP origin (including a dynamically assigned port). Passwords and challenges remain in the normal login form. Model configuration uses the root runtime's `OPENAI_API_KEY` and optional `EUFY_AGENT_MODEL`; normal browsing and local snapshots work without model configuration.
+The local page's floating robot assistant button opens task chat backed by the existing root `agent/runtime.cjs` in the resident process. Its tools call the actual listening HTTP origin (including a dynamically assigned port). Passwords and challenges remain in the normal login form. Model configuration uses the root runtime's `OPENAI_API_KEY` and optional `EUFY_AGENT_MODEL`; normal browsing and local snapshots work without model configuration.
 
 `http.cjs` is a thin interface adapter, not another business API. `POST /interface/agent/turn` accepts only `{id,text,locale}` from the local page and returns 202 as soon as the resident owns the turn. The caller-generated ID is durable: repeating an accepted ID does not call the model again. A different concurrent turn returns `TURN_BUSY`. Disconnecting the submitting browser does not abort the turn. `GET /interface/agent/state` returns conversation messages, service range receipts and authoritative job views through the existing HTTP client. Polling this endpoint never invokes the model.
 

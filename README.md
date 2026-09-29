@@ -4,7 +4,7 @@
 
 ## English
 
-A local eufy recording application with reusable capabilities, a resident HTTP API, a CLI, and an optional recording Agent. The browser provides event-recording browsing, an Agent sidebar, shared result components and a persistent workspace, with English and Simplified Chinese interfaces.
+A local eufy recording application with reusable capabilities, a resident HTTP API, a CLI, and an optional recording Agent. The browser provides event-recording browsing, a floating robot launcher for the Agent chat, shared result components and a persistent workspace, with English and Simplified Chinese interfaces.
 
 **Phase 1 and Phase 2 delivery is merged through PR #32.** React migration M1–M4 and M6 is merged in PRs #41–#45. M5/#40 adds bounded Live preview and changes `/` to the React interface in PR #46; `/legacy/` remains the fallback. The final PR review and CI gate still apply. The original 15 issues (#1–#14 and #16) are closed as of 2026-09-13. Completion means scoped acceptance criteria were met; it does not establish gap-free exports or support for every device. See [delivery history](#delivery-history) and [hardware evidence and limits](#hardware-evidence-and-limits).
 
@@ -19,7 +19,7 @@ A local eufy recording application with reusable capabilities, a resident HTTP A
 | Job recovery, cancellation and explicit retry | **`/app/jobs`**, resident job service, CLI and v1 API | Interrupted capture is not resumed; no dedicated CLI cancel/retry commands |
 | Historical browser playback | **`/app/recordings`**, v1 playback-session API | Bounded in-index preview with pause/resume and serialized seek; exact hardware evidence remains device/firmware scoped |
 | Live video | **`/app/live`** or v1 live-session API | On-demand, video-only, 1–60 seconds, up to 5 fps/960 px; fresh browser hardware evidence is scoped to one T8600/T8030 path |
-| Natural-language export | **Ask assistant** sidebar or terminal Agent | Requires model configuration; ordinary browsing does not |
+| Natural-language export | Floating assistant launcher in the browser or terminal Agent | Requires model configuration; ordinary browsing does not |
 | Shared results and dynamic workspace | Both browser views | Device/timeline/job/player components; pin, reorder and restore references |
 
 The original event-search form at `/legacy/` has no direct continuous-export control. In React **Browse recordings**, choose **Check continuous availability** and **Export requested continuous window**; this needs no Agent model configuration. The Agent can also submit continuous exports, and a workspace timeline backed by an Agent range receipt has an export action. The public [v1 contract](api/v1.md) and [legacy page routes](api/README.md) are separate interfaces. React migration status and acceptance evidence are tracked in the [feature-parity checklist](docs/FEATURE_PARITY.md); use `/legacy/` to return to the old page.
@@ -74,7 +74,7 @@ Replace these example paths with your installed executables. Login and device di
 #### Browser workflow
 
 1. Sign in, then choose **Browse recordings**. Select a camera, date and time interval to find event recordings, download a result and play the saved MP4.
-2. To request a continuous interval, choose **Check continuous availability**, then **Export requested continuous window** in **Browse recordings**. This does not require an Agent model. Alternatively, use **Ask assistant** with a configured Agent, or the CLI/API. Specify the camera, calendar date, start/end and timezone; ambiguous Agent requests require clarification.
+2. To request a continuous interval, choose **Check continuous availability**, then **Export requested continuous window** in **Browse recordings**. This does not require an Agent model. Alternatively, open the robot assistant button with a configured Agent, or use the CLI/API. Specify the camera, calendar date, start/end and timezone; ambiguous Agent requests require clarification.
 3. Follow the shared job card and inspect the actual coverage and validation result. A playable `partial` output remains incomplete.
 4. Pin useful workspace results and reorder them. Browser refresh restores references and observes existing resident work without another model call.
 
@@ -99,7 +99,7 @@ Export returns `job.jobId` after durable acceptance. Exiting the submitting clie
 
 #### Optional recording Agent
 
-Set `OPENAI_API_KEY` in the resident process environment for the browser sidebar; `EUFY_AGENT_MODEL` optionally selects the model (default `gpt-4.1-mini`). For an ignored `.env.local` file containing that configuration, start the browser service with:
+Set `OPENAI_API_KEY` in the resident process environment for the browser assistant; `EUFY_AGENT_MODEL` optionally selects the model (default `gpt-4.1-mini`). For an ignored `.env.local` file containing that configuration, start the browser service with:
 
 ```sh
 node --env-file=.env.local interface/server.cjs
@@ -111,7 +111,7 @@ node --env-file=.env.local interface/server.cjs
 node --env-file=.env.local agent/main.cjs --url http://127.0.0.1:3187
 ```
 
-Example request: “Export Drive Way on 2026-09-12 from 16:30 to 16:50, America/Toronto.” Substitute your camera and retained date. Enter account passwords and verification codes only in the normal login flow, not chat. Agent polling observes HTTP state without paid model calls. See [Agent setup](agent/README.md) and [sidebar behavior](interface/agent/README.md).
+Example request: “Export Drive Way on 2026-09-12 from 16:30 to 16:50, America/Toronto.” Substitute your camera and retained date. Enter account passwords and verification codes only in the normal login flow, not chat. Agent polling observes HTTP state without paid model calls. See [Agent setup](agent/README.md) and [assistant behavior](interface/agent/README.md).
 
 ### Jobs, recovery and API-only controls
 
@@ -185,7 +185,7 @@ Based on the MIT-licensed [bropat/eufy-security-client](https://github.com/bropa
 
 ## 中文
 
-本地运行的 eufy 录像应用，包含可复用能力、常驻 HTTP API、CLI 和可选的录像 Agent。浏览器已提供事件录像查询、Agent 侧栏、共享结果组件和可恢复工作区，支持英文和简体中文。
+本地运行的 eufy 录像应用，包含可复用能力、常驻 HTTP API、CLI 和可选的录像 Agent。浏览器已提供事件录像查询、浮动机器人助手入口、共享结果组件和可恢复工作区，支持英文和简体中文。
 
 **Phase 1、Phase 2 已交付，代码合并至 PR #32。** React 迁移的 M1–M4 和 M6 已在 PR #41–#45 合并。M5/#40 在 PR #46 加入有限时长的 Live 预览，并将 `/` 切换到 React；`/legacy/` 保留旧版回退。PR 最终审阅与 CI 门槛仍须通过。原有 15 个 Issue（#1–#14、#16）截至 2026-09-13 均已关闭。这表示完成各项约定范围的验收，不代表已实现无缺口导出或验证所有设备。交付记录见下方，实机限制单独列明。
 
@@ -200,7 +200,7 @@ Based on the MIT-licensed [bropat/eufy-security-client](https://github.com/bropa
 | 任务恢复、取消、显式重试 | **`/app/jobs`**、常驻任务服务、CLI 和 v1 API | 中断捕获不能续传；CLI 尚无取消/重试子命令 |
 | 历史浏览器回放 | **`/app/recordings`**、v1 回放会话 API | 在索引范围内有限预览，支持暂停/恢复和串行跳转；实机证据仅适用于对应设备/固件范围 |
 | 实时视频 | **`/app/live`** 或 v1 Live 会话 API | 按需启动的纯视频预览，1–60 秒、最高 5 fps/960 像素；新浏览器实机证据仅适用于一个 T8600/T8030 范围 |
-| 自然语言导出 | **询问助手**侧栏或终端 Agent | 需要配置模型；普通浏览不需要 |
+| 自然语言导出 | 浏览器中的**浮动机器人助手按钮**或终端 Agent | 需要配置模型；普通浏览不需要 |
 | 共享结果与动态工作区 | 两种页面模式 | 设备、时间轴、任务、播放器组件；支持固定、排序和引用恢复 |
 
 `/legacy/` 的旧事件查询表单没有直接导出连续录像的按钮。在 React **浏览录像**中，选择**检查连续录像范围**，再选择**导出请求的连续录像时段**；无需配置 Agent 模型。Agent 也可以提交连续导出；工作区中由 Agent 范围查询凭据生成的时间轴也提供导出操作。[v1 契约](api/v1.md)与[旧页面路由](api/README.md)是不同接口。React 迁移状态和验收记录见[功能对照清单](docs/FEATURE_PARITY.md)；使用 `/legacy/` 可返回旧版页面。
@@ -255,7 +255,7 @@ npm start
 #### 页面操作
 
 1. 登录后选择**浏览录像**，选择摄像头、日期和时间范围，查询事件、下载片段并播放已保存的 MP4。
-2. 要导出连续时段，在**浏览录像**中选择**检查连续录像范围**，再选择**导出请求的连续录像时段**，无需配置 Agent 模型。也可配置 Agent 后使用**询问助手**，或使用 CLI/API。明确摄像头、日期、起止时间和时区；Agent 会追问不明确的请求。
+2. 要导出连续时段，在**浏览录像**中选择**检查连续录像范围**，再选择**导出请求的连续录像时段**，无需配置 Agent 模型。也可配置 Agent 后点击**浮动机器人助手按钮**，或使用 CLI/API。明确摄像头、日期、起止时间和时区；Agent 会追问不明确的请求。
 3. 查看共享任务卡上的进度、实际覆盖和校验结果。可播放的 `partial` 文件仍是覆盖不完整的结果。
 4. 将常用结果固定到工作区并调整顺序。刷新页面会恢复引用、查询已有任务，不会再次调用模型。
 
@@ -280,7 +280,7 @@ node cli/eufy.cjs --json artifacts get JOB_ID ARTIFACT_ID --output recording.mp4
 
 #### 可选的录像 Agent
 
-页面侧栏需要在**常驻服务进程**中配置 `OPENAI_API_KEY`；`EUFY_AGENT_MODEL` 可指定模型，默认 `gpt-4.1-mini`。若使用不进入 Git 的 `.env.local` 文件，可这样启动页面服务：
+浏览器助手需要在**常驻服务进程**中配置 `OPENAI_API_KEY`；`EUFY_AGENT_MODEL` 可指定模型，默认 `gpt-4.1-mini`。若使用不进入 Git 的 `.env.local` 文件，可这样启动页面服务：
 
 ```sh
 node --env-file=.env.local interface/server.cjs
@@ -292,7 +292,7 @@ node --env-file=.env.local interface/server.cjs
 node --env-file=.env.local agent/main.cjs --url http://127.0.0.1:3187
 ```
 
-请求示例：“导出 Drive Way 在 2026-09-12 的 16:30 到 16:50 录像，时区 America/Toronto。”请替换实际摄像头和仍有录像的日期。账号密码、验证码只在正常登录流程填写，不要放进对话。任务状态轮询只查询 HTTP，不消耗模型调用。详见 [Agent 配置](agent/README.md)及[侧栏说明](interface/agent/README.md)。
+请求示例：“导出 Drive Way 在 2026-09-12 的 16:30 到 16:50 录像，时区 America/Toronto。”请替换实际摄像头和仍有录像的日期。账号密码、验证码只在正常登录流程填写，不要放进对话。任务状态轮询只查询 HTTP，不消耗模型调用。详见 [Agent 配置](agent/README.md)及[助手说明](interface/agent/README.md)。
 
 ### 任务恢复与仅 API 提供的操作
 
