@@ -153,7 +153,8 @@ export async function readPlaybackParts(response:Response,onPart:(part:MediaPart
 function HistoricalPlayer({input,range,rangeMatches,previewTarget,authenticated,c,showError,onSerialLock,onRecoverSerial}:{input:WindowInput;range:any;rangeMatches:boolean;previewTarget?:PreviewTarget;authenticated:boolean;c:any;showError:(error:any)=>string;onSerialLock:(serial?:string)=>void;onRecoverSerial:(serial:string)=>void}){
   const canvas=useRef<HTMLCanvasElement>(null),generation=useRef(0),streamGeneration=useRef(0),identityGeneration=useRef(0),current=useRef<Playback>(),ownerSerial=useRef<string>(),visibleSerial=useRef(input.serial),terminal=useRef(false),paused=useRef(false),resumeAcknowledged=useRef(true),stream=useRef<AbortController>(),decoding=useRef(false),pending=useRef<(MediaPart&{generation:number})>(),minimumEpoch=useRef(0),seekRunning=useRef(false),queuedSeek=useRef<WindowInput>();visibleSerial.current=input.serial
   const [playback,setPlayback]=useState<Playback>(),[state,setState]=useState('idle'),[error,setError]=useState<any>(),[display,setDisplay]=useState<{source:number;sequence:number;epoch:number;latency:number}>(),[recovered,setRecovered]=useState(false)
-  const duration=previewTarget?previewTarget.end-previewTarget.start:0,seekDuration=duration
+  const duration=previewTarget?previewTarget.end-previewTarget.start:0
+  const [startHour,startMinute]=input.start.split(':').map(Number),[endHour,endMinute]=input.end.split(':').map(Number),seekDuration=((endHour*60+endMinute)-(startHour*60+startMinute))*60000
   const contained=Boolean(rangeMatches&&previewTarget&&range.ranges?.some((item:any)=>Date.parse(item.start)<=previewTarget.start&&Date.parse(item.end)>=previewTarget.end))
   const eligible=authenticated&&Boolean(previewTarget)&&contained&&duration>=1000&&duration<=60000
   const remember=(value:any)=>{try{localStorage.setItem(playbackStorageKey,JSON.stringify(value));return true}catch{return false}}
