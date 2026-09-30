@@ -79,7 +79,7 @@ export function AssistantWorkspace({open,title,close,closeLabel,returnFocusRef,l
   }),[translate,title,language,catalog])
 
   return <>
-    <section className="shared-workspace" aria-labelledby="shared-workspace-title"><h2 id="shared-workspace-title">{translate('ui.sharedResults',{},'Workspace')}</h2><p>{translate('ui.sharedHint',{},'Assistant and manual results share registered resident data.')}</p>{loading&&<p role="status">{translate('ui.agentLoading',{},'Loading the resident conversation…')}</p>}<p id="workspace-status" role="status"/><div id="workspace-views"/></section>
+    <section className="shared-workspace"><details><summary><h2 id="shared-workspace-title">{translate('ui.sharedResults',{},'Workspace')}</h2></summary><p>{translate('ui.sharedHint',{},'Assistant and manual results share registered resident data.')}</p>{loading&&<p role="status">{translate('ui.agentLoading',{},'Loading the resident conversation…')}</p>}<p id="workspace-status" role="status"/><div id="workspace-views"/></details></section>
     <ConfirmDialog open={open} title={title} close={close} closeLabel={closeLabel} returnFocusRef={returnFocusRef}>
       <AssistantRuntimeProvider runtime={runtime}><ThreadPrimitive.Root className="aui-thread"><ThreadPrimitive.Viewport className="aui-viewport">
         <ThreadPrimitive.Empty><p className="aui-empty">{loading?translate('ui.agentLoading',{},'Loading conversation…'):translate('ui.agentHint',{},'Name the camera, date, and start and end times.')}</p></ThreadPrimitive.Empty>

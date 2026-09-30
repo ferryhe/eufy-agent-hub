@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react'
 import { createResults } from '../../components/results.mjs'
-import type { Job } from './client'
+import type { Artifact, Job } from './client'
 
 const terminal = (job:Job) => ['succeeded','failed','cancelled'].includes(job.state)
 
@@ -19,9 +19,9 @@ export function jobResultView(job:Job) {
     validation:result?.validation??null,diagnostics:result?.diagnostics??[],error:job.error}
 }
 
-export function JobResultCard({job,i18n}:{job:Job;i18n:any}) {
+export function JobResultCard({job,i18n,onSaveArtifact}:{job:Job;i18n:any;onSaveArtifact?:(artifact:Artifact,job:Job)=>void}) {
   const root=useRef<HTMLDivElement>(null)
-  useEffect(()=>{const results=createResults({document,i18n}),card=root.current!.firstElementChild
-    if(card)results.updateJob(card,jobResultView(job));else root.current!.append(results.job(jobResultView(job)))},[job,i18n])
+  useEffect(()=>{const results=createResults({document,i18n,onSave:onSaveArtifact}),card=root.current!.firstElementChild
+    if(card)results.updateJob(card,jobResultView(job));else root.current!.append(results.job(jobResultView(job)))},[job,i18n,onSaveArtifact])
   return <div ref={root}/>
 }

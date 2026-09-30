@@ -94,7 +94,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid 
 .assistant-error{margin:.65rem 0;padding:.65rem .8rem;border:1px solid #f0c7c1;border-radius:.55rem;background:#fff7f5;color:#8a3417;font-size:.875rem;line-height:1.45}
 .assistant-panel-body>.link{align-self:flex-start;margin:.75rem 0 0}
 .shared-workspace{margin-top:2rem;padding:1.25rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface)}
-.shared-workspace>h2{margin-top:0}
+.shared-workspace summary{cursor:pointer}.shared-workspace summary h2{display:inline-block;margin:.1rem 0}.shared-workspace details>p:first-of-type{color:var(--muted)}
 .workbench,.task-center,.live-page{margin-top:1.25rem}
 .workbench h2,.task-center h2,.live-page h2{margin:.25rem 0 .4rem;font-size:1.35rem}
 .workbench-columns{gap:1.25rem}
@@ -137,6 +137,20 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid 
 .dark .assistant-error{border-color:#653a3b;background:#35252a;color:#fecaca}
 .dark .diagnostics{border-color:var(--border);background:var(--surface);color:var(--muted)}
 .dark .timeline-card,.dark .job-card,.dark .device-card,.dark .clip{border-color:var(--border);background:var(--surface);color:var(--text)}
+.event-record-list{display:grid;gap:.75rem;list-style:none;padding:0}
+.event-record-list li{display:block;margin:0;padding:.7rem;border:1px solid var(--border);border-radius:.55rem}
+.event-record-list li.selected{background:var(--primary-soft)}
+.event-record-row{display:flex;align-items:center;justify-content:space-between;gap:.75rem}.event-record-row strong{min-width:0;overflow-wrap:anywhere}.event-record-row>div{display:flex;gap:.5rem;flex-wrap:wrap}
+.event-preview-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:.4rem;margin-top:.75rem;padding-top:.65rem;border-top:1px solid var(--border)}
+.continuous-preview-grid{display:grid;grid-template-columns:1fr;align-items:start;gap:1rem;margin-top:1rem}
+.event-preview-grid h4,.continuous-export-pane h4{margin:.2rem 0 .35rem}
+.event-preview-placeholder{display:grid;place-items:center;aspect-ratio:16/9;margin:.5rem 0;padding:1rem;border-radius:.4rem;background:#111827;color:#f9fafb;text-align:center}
+.event-preview-placeholder.error{background:#3b1717;color:#fecaca}
+.event-preview-grid video{display:block;width:100%;max-height:30rem;aspect-ratio:16/9;margin:.5rem 0;background:#000;object-fit:contain}
+.continuous-preview-grid .historical-player{min-width:0;margin:0;padding:1rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface)}
+.continuous-export-pane{display:grid;align-content:start;gap:.65rem;padding:1rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface)}
+.continuous-export-pane p{margin:0 0 .35rem;color:var(--muted);line-height:1.45}
+@media(max-width:450px){.event-record-row{align-items:flex-start;flex-direction:column}.event-record-row>div{width:100%}.event-record-row button{flex:1}}
 @media(max-width:850px){.sidebar{width:17rem}.task-filters{grid-template-columns:1fr 1fr}.live-controls{grid-template-columns:minmax(0,1fr) 9rem}}
 @media(max-width:700px){.menu{display:grid}.collapse{display:none}header{padding:0 1rem}main{padding:1.25rem 1rem 6rem}.sidebar{width:17rem}.sidebar.collapsed{width:17rem}.sidebar.collapsed .brand-name,.sidebar.collapsed .nav-label{display:inline}.sidebar.collapsed .brand{justify-content:flex-start;padding:.5rem .75rem}.sidebar.collapsed nav button.nav-item{justify-content:flex-start;padding:.6rem .75rem}.content{min-height:100vh}.assistant-drawer .assistant-panel{width:100vw;max-width:none;border-left:0;box-shadow:none}.assistant-panel-body{padding:0 1rem max(1rem,env(safe-area-inset-bottom))}.live-controls{grid-template-columns:minmax(0,1fr) 8rem}.task-filters{grid-template-columns:1fr 1fr}}
 @media(max-width:450px){main{padding:1rem .75rem 6rem}header{padding:0 .75rem}.controls{gap:.35rem}.controls select,.controls button{padding:.35rem .45rem}.assistant-launcher{right:max(.875rem,env(safe-area-inset-right));bottom:max(.875rem,env(safe-area-inset-bottom));width:3.25rem;height:3.25rem}.task-filters{grid-template-columns:1fr}.live-controls{grid-template-columns:1fr}.live-controls>label,.live-controls>button{grid-column:1/-1}.aui-message.user{margin-left:.5rem}.aui-message.assistant-response{margin-right:.5rem}.aui-composer{grid-template-columns:1fr}.aui-composer button{justify-self:end}}

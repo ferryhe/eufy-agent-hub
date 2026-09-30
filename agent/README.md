@@ -4,7 +4,7 @@ One ordinary OpenAI Agents SDK `Agent` runs in the caller's Node 24 process. Det
 
 ## Run
 
-Install/build with `npm ci`, `npm run setup`, `npm run build`. Start the resident separately with `npm start`, then complete its normal login page at `/`. Keep passwords and challenge answers on that page. Configure `OPENAI_API_KEY` in the process environment or an ignored env file. `EUFY_AGENT_MODEL` selects a tool-capable OpenAI model; default `gpt-4.1-mini`.
+Install/build with `npm ci`, `npm run setup`, `npm run build`. Start the resident separately with `npm start`, then complete its normal login page at `/`. Keep passwords and challenge answers on that page. Configure `OPENAI_API_KEY` in the process environment or an ignored env file. `EUFY_AGENT_MODEL` selects a tool-capable OpenAI model; default `gpt-6-luna`.
 
 ```sh
 node --env-file=.env.local agent/main.cjs --url http://127.0.0.1:3187
@@ -56,4 +56,4 @@ node --env-file=.env.local agent/validate.cjs --hardware --url http://127.0.0.1:
 
 The runner permits only Drive Way T8600 linked to T8030, **2026-08-27 16:30–16:50 America/Toronto**, one export identity. It rejects port 3187, changed windows/devices and a second identity. Unretained footage is reported without expanding the window. Observation is bounded to 40 minutes and download to 3 minutes. Reuse the same evidence directory after a lost response. The sanitized summary excludes account, serial, IP, key and video content. `private-agent-state.json`, `private-tools.json`, `private-result.json` and `private-video.mp4` are private evidence; do not publish them. Results remain honestly complete/partial/failed. The recorded real run and retained private evidence are summarized in [VALIDATION.md](VALIDATION.md); complete coverage was not achieved.
 
-Sources checked: [SDK guide](https://developers.openai.com/api/docs/guides/agents/sdk), [JS quickstart](https://openai.github.io/openai-agents-js/guides/quickstart/), installed SDK 0.18.0 declarations/public testing exports and [model reference](https://developers.openai.com/api/docs/models/gpt-4.1-mini).
+Sources checked: [SDK guide](https://developers.openai.com/api/docs/guides/agents/sdk), [JS quickstart](https://openai.github.io/openai-agents-js/guides/quickstart/), installed SDK 0.18.0 declarations/public testing exports and [GPT-6 Luna model reference](https://developers.openai.com/api/docs/models/gpt-6-luna).

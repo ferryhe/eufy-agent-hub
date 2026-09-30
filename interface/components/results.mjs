@@ -1,5 +1,5 @@
 // Presentation only. Windows, range ordering, status and URLs belong to the API.
-export function createResults({ document, i18n }) {
+export function createResults({ document, i18n, onSave }) {
   const t = (key, params, fallback) => i18n.t(key, params, fallback);
   const error = value => t(`ui.error.${value.code}`, {}, value.message || value.code);
   const node = (tag, text, className) => {
@@ -40,12 +40,14 @@ export function createResults({ document, i18n }) {
     if (ranges) card.append(ranges.length ? list : node('p', t('ui.noFootage')));
     return card;
   }
-  function player(artifact, label) {
+  function player(artifact, label, save = onSave ? () => onSave(artifact) : undefined) {
     const card = node('article', undefined, 'clip');
     const title = node('strong', label);
     const video = node('video'); video.controls = true; video.preload = 'metadata'; video.src = artifact.url;
     const link = node('a', t('ui.downloadFile')); link.href = artifact.url + (artifact.url.includes('?') ? '&' : '?') + 'download';
-    card.append(title, video, link); return card;
+    card.append(title, video, link);
+    if (save) { const button = node('button', t('ui.saveToFolder', {}, 'Save MP4…')); button.type = 'button'; button.dataset.saveFolder = ''; button.onclick = save; card.append(button); }
+    return card;
   }
   function updateJob(card, view) {
     const { job } = view;
@@ -67,9 +69,12 @@ export function createResults({ document, i18n }) {
     for (const artifact of view.videos) {
       keys.add(artifact.id);
       let existing = [...players.children].find(child => child.dataset.artifact === artifact.id);
-      if (!existing) { existing = player(artifact, artifact.name); existing.dataset.artifact = artifact.id; players.append(existing); }
+      if (!existing) { existing = player(artifact, artifact.name, onSave && (() => onSave(artifact, job))); existing.dataset.artifact = artifact.id; players.append(existing); }
       existing.querySelector('strong').textContent = `${artifact.name} · ${t(`ui.job.${artifact.outcome}`)}`;
       existing.querySelector('a').textContent = t('ui.downloadFile');
+      let save = existing.querySelector('[data-save-folder]');
+      if (onSave) { if (!save) { save = node('button', t('ui.saveToFolder', {}, 'Save MP4…')); save.type = 'button'; save.dataset.saveFolder = ''; existing.append(save); } save.textContent = t('ui.saveToFolder', {}, 'Save MP4…'); save.onclick = () => onSave(artifact, job); }
+      else save?.remove();
     }
     for (const child of [...players.children]) if (!keys.has(child.dataset.artifact)) child.remove();
   }

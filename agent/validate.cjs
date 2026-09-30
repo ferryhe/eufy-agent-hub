@@ -40,7 +40,7 @@ async function validate(args = process.argv.slice(2)) {
   const evidenceDir = value('--evidence-dir');
   if (!evidenceDir || !path.isAbsolute(evidenceDir)) throw new Error('Provide an absolute private evidence directory.');
   fs.mkdirSync(evidenceDir, { recursive: true });
-  const model = process.env.EUFY_AGENT_MODEL || 'gpt-4.1-mini';
+  const model = process.env.EUFY_AGENT_MODEL || 'gpt-6-luna';
   const summary = { mode: hardware ? 'hardware' : 'synthetic-http', model, sdk: '0.18.0', modelGate: 'not-run', hardwareGate: hardware ? 'pending' : 'not-run',
     modelRequest: { api: 'responses', maxTurns: 8, maxOutputTokens: 1000, store: false, tracing: false, transportRetries: 0 } };
   let fixture;
