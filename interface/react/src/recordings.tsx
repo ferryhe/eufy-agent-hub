@@ -1,11 +1,13 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { api, type Device, type Discovery, type ExpectedQuery, type Job, type LegacyRecordings, type Playback, type WindowInput } from './client'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { api, type Artifact, type Device, type Discovery, type ExpectedQuery, type Job, type LegacyRecordings, type Playback, type WindowInput } from './client'
 import { createResults } from '../../components/results.mjs'
 import { JobResultCard } from './job-result'
+import { chooseExportFile, saveArtifactToFile } from './export-file'
 
 type Language = 'en'|'zh-CN'
 type Intent = { requestId:string; input:WindowInput; submitted:boolean; jobId?:string }
 type Store = { version:1; intent?:Intent; jobIds:string[] }
+type PreviewTarget = { input:WindowInput; start:number; end:number }
 const storageKey = 'eufy-agent-hub.recording-workbench'
 const fingerprint = (input:WindowInput) => JSON.stringify(input)
 const today = () => new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Toronto',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())
@@ -16,11 +18,12 @@ const words = {
     title:'Recording workbench', intro:'Choose the exact resident camera and one same-day window. Event recordings and continuous availability are independent results.',
     exact:'Exact camera', choose:'Choose a camera by serial', identity:'Names can repeat; the serial, HomeBase and channel identify the selection.',
     date:'Date', start:'Start time', end:'End time', timezone:'Service timezone', events:'Event recordings', findEvents:'Find event recordings',
-    eventsSeparate:'Event recordings are separate from continuous availability.', requeryEvents:'The camera or time no longer matches these event results. Query event recordings again.',
+    eventsSeparate:'Event clips are independent from continuous recording. Previewing a clip first downloads and prepares it locally.', requeryEvents:'The camera or time no longer matches these event results. Query event recordings again.',
     eventCount:(n:number)=>`${n} event recording${n===1?'':'s'} found.`,
-    noEvents:'No event recordings in this window. This does not determine continuous recording availability.', exportEvent:'Export this event recording',
-    continuous:'Continuous recording', check:'Check continuous availability', available:'Continuous index ranges are available; they do not prove complete coverage.',
-    noContinuous:'The continuous index has no footage for this window.', exportContinuous:'Export requested continuous window', jobs:'Known continuous export tasks',
+    noEvents:'No event recordings in this window. This does not determine continuous recording availability.', exportEvent:'Export MP4…', previewEvent:'Preview', eventPreview:'Event recording preview', preparingPreview:'Preparing preview… The clip is downloading and converting.', previewUnavailable:'Choose Preview to load this clip.',
+    folderUnsupported:'MP4 file selection is available in Chrome or Edge on this local page.', folderSaveFailed:'Could not save the MP4 file.', savedToFolder:'MP4 saved.',
+    continuous:'Continuous recording', check:'Check continuous availability', available:'Continuous index ranges are available; they do not prove complete coverage.', previewContinuous:'Continuous recording preview', previewSample:'Preview sample', playbackNoSample:'No complete one-minute sample was found inside this window.', exportHint:'Start the export here, then use Save MP4 on the completed task to choose a file name and location.',
+    noContinuous:'The continuous index has no footage for this window.', exportContinuous:'Export MP4', jobs:'Known continuous export tasks',
     saved:'Saved event recordings', savedHint:'Previously saved event exports remain separate from durable continuous jobs.', savedDownload:'Download saved event recording',
     loading:'Loading devices…', working:'Working…', noDevices:'No recording camera was returned. Retry discovery or refresh the resident inventory.',
     ambiguous:'Choose one exact camera. The resident returned multiple possible devices.', missing:'The selected camera is no longer in the resident inventory.',
@@ -32,8 +35,8 @@ const words = {
     lost:'The submission connection was lost. The intent is saved; refresh or press export again to reuse the same request ID.',
     crossMidnight:'The end must be later on the same calendar day. Split a cross-midnight request into two same-day windows; the date or timezone was not changed.',
     signedOut:'Sign in to query devices or start recordings. Known jobs and saved event exports remain available.',
-    preview:'Direct historical preview', previewHint:'Video-only H.264/HEVC preview, up to 5 fps and 960 px. Choose a 1–60 second window fully inside one listed recording.',
-    play:'Play selected timestamp', pause:'Pause preview', resume:'Resume preview', seek:'Seek to selected timestamp', close:'Close preview',
+    preview:'Continuous recording preview', previewHint:'Preview a 1–60 second window fully contained in one listed recording.',
+    play:'Play preview sample', pause:'Pause preview', resume:'Resume preview', seek:'Restart preview sample', close:'Close preview',
     sourcePosition:'Source received position', sourceCaution:'Preview decoding is delayed; this is a source-receive observation, not a JPEG PTS or frame-accurate position.',
     firstFrame:'Measured browser first-frame latency', frameSequence:'Displayed frame', waitingFrame:'Waiting for a decodable keyframe…',
     resumeWaiting:'Resuming with a fresh decoder…', recovered:'A saved playback request was recovered. Open it explicitly to display media.', openRecovered:'Open recovered preview',
@@ -43,11 +46,12 @@ const words = {
     title:'录像工作台', intro:'选择常驻服务中的确切摄像头和同一天内的时间窗口。事件录像与连续录像范围是相互独立的结果。',
     exact:'确切摄像头', choose:'按序列号选择摄像头', identity:'名称可能重复；序列号、HomeBase 和通道共同确定所选设备。',
     date:'日期', start:'开始时间', end:'结束时间', timezone:'服务时区', events:'事件录像', findEvents:'查询事件录像',
-    eventsSeparate:'事件录像结果与连续录像范围分开显示。', requeryEvents:'摄像头或时间已与这些事件结果不符，请重新查询事件录像。',
+    eventsSeparate:'事件录像与连续录像分开查询。预览前会先下载并在本机准备视频。', requeryEvents:'摄像头或时间已与这些事件结果不符，请重新查询事件录像。',
     eventCount:(n:number)=>`找到 ${n} 段事件录像。`,
-    noEvents:'此时间窗口没有事件录像；这不能说明连续录像也为空。', exportEvent:'导出此事件录像',
-    continuous:'连续录像', check:'检查连续录像范围', available:'连续录像索引存在可用区间，但不代表覆盖完整。',
-    noContinuous:'连续录像索引在此时间窗口没有录像。', exportContinuous:'导出请求的连续录像时段', jobs:'已知连续导出任务',
+    noEvents:'此时间窗口没有事件录像；这不能说明连续录像也为空。', exportEvent:'导出 MP4…', previewEvent:'预览', eventPreview:'事件录像预览', preparingPreview:'正在准备预览…先下载录像并转换视频。', previewUnavailable:'点击“预览”加载这段录像。',
+    folderUnsupported:'请在本地页面使用 Chrome 或 Edge 选择 MP4 保存位置。', folderSaveFailed:'无法保存 MP4 文件。', savedToFolder:'MP4 已保存。',
+    continuous:'连续录像', check:'检查连续录像范围', available:'连续录像索引存在可用区间，但不代表覆盖完整。', previewContinuous:'连续录像预览', previewSample:'预览片段', playbackNoSample:'此时间范围内没有完整的一分钟录像可供预览。', exportHint:'在此启动导出，任务完成后点击“保存 MP4”选择文件名和位置。',
+    noContinuous:'连续录像索引在此时间窗口没有录像。', exportContinuous:'导出 MP4', jobs:'已知连续导出任务',
     saved:'已保存的事件录像', savedHint:'以前保存的事件导出与持久连续任务仍然分开。', savedDownload:'下载已保存的事件录像',
     loading:'正在读取设备…', working:'处理中…', noDevices:'常驻服务未返回录像摄像头。请重试发现或刷新设备清单。',
     ambiguous:'请选择一个确切摄像头。常驻服务返回了多个可能设备。', missing:'所选摄像头已不在常驻服务设备清单中。',
@@ -59,8 +63,8 @@ const words = {
     lost:'提交连接已中断。请求意图已保存；刷新或再次导出会复用同一请求编号。',
     crossMidnight:'结束时间必须晚于同一日的开始时间。跨午夜请求请拆成两个同日窗口；页面没有更改日期或时区。',
     signedOut:'请登录后查询设备或开始录像。已知任务与已保存事件录像仍可访问。',
-    preview:'直接历史预览', previewHint:'仅视频 H.264/HEVC 预览，最高 5 fps、960 px。请选择完整落在同一条录像内的 1–60 秒窗口。',
-    play:'播放所选时间', pause:'暂停预览', resume:'继续预览', seek:'跳转到所选时间', close:'关闭预览',
+    preview:'连续录像预览', previewHint:'预览时长为 1–60 秒，且所选时间必须完整落在一段已列出的录像内。',
+    play:'播放预览片段', pause:'暂停预览', resume:'继续预览', seek:'重新播放此片段', close:'关闭预览',
     sourcePosition:'源接收位置', sourceCaution:'预览存在解码延迟；该时间是源接收观测值，不是 JPEG 精确 PTS，也不代表逐帧定位。',
     firstFrame:'浏览器实测首帧延迟', frameSequence:'已显示帧', waitingFrame:'正在等待可解码关键帧…',
     resumeWaiting:'正在用新解码器继续…', recovered:'已恢复保存的播放请求。请明确打开后再显示媒体。', openRecovered:'打开已恢复的预览',
@@ -86,6 +90,20 @@ function fault(error:any) {
   return {code:body?.errorI18n?.key||'SERVICE_UNAVAILABLE',message:typeof body?.error==='string'?body.error:error?.message}
 }
 const eventFingerprint=(serial:string,window:{day:string;start:string;end:string;timezone:string|null})=>JSON.stringify([serial,window.day,window.start,window.end,window.timezone])
+const eventOutputName=(clip:LegacyRecordings['saved'][number])=>`eufy-${clip.serial||'camera'}-${clip.recordId}-${clip.start.slice(0,19).replace(/[T:]/g,'-')}.mp4`
+const jobOutputName=(artifact:Artifact,job:Job)=>`${job.result?.outcome==='partial'?'partial-':''}eufy-${job.serial}-${job.window.input.day}-${job.jobId.slice(0,8)}-${artifact.name}`
+function previewTargetFor(range:any,input:WindowInput):PreviewTarget|undefined {
+  if(!range?.window?.normalized||!Array.isArray(range.ranges))return
+  const requestStart=Date.parse(range.window.normalized.start),requestEnd=Date.parse(range.window.normalized.end),timezone=range.window.normalized.timezone||input.timezone
+  const format=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})
+  const fields=(instant:number)=>Object.fromEntries(format.formatToParts(new Date(instant)).map(part=>[part.type,part.value]))
+  for(const item of range.ranges){const lower=Math.max(requestStart,Date.parse(item.start)),upper=Math.min(requestEnd,Date.parse(item.end)),start=Math.ceil(lower/60000)*60000,end=start+60000
+    if(!Number.isFinite(lower)||!Number.isFinite(upper)||end>upper)continue
+    const from=fields(start),to=fields(end),day=`${from.year}-${from.month}-${from.day}`
+    if(day!==`${to.year}-${to.month}-${to.day}`)continue
+    return {input:{...input,day,start:`${from.hour}:${from.minute}`,end:`${to.hour}:${to.minute}`},start,end}
+  }
+}
 
 function Timeline({value,i18n,label}:{value:any;i18n:any;label:string}) {
   const root=useRef<HTMLDivElement>(null)
@@ -97,14 +115,15 @@ function DeviceCard({device,i18n}:{device:Device;i18n:any}) {
   useEffect(()=>{root.current!.replaceChildren(createResults({document,i18n}).device(device))},[device,i18n])
   return <div ref={root}/>
 }
-function SavedPlayers({clips,i18n,download}:{clips:LegacyRecordings['saved'];i18n:any;download:string}) {
+function SavedPlayers({clips,i18n,download,onSave}:{clips:LegacyRecordings['saved'];i18n:any;download:string;onSave?:(clip:LegacyRecordings['saved'][number])=>void}) {
   const root=useRef<HTMLDivElement>(null)
   useEffect(()=>{const results=createResults({document,i18n}),keys=new Set(clips.map(clip=>clip.id))
     for(const clip of clips){let card=[...root.current!.children].find((item:any)=>item.dataset.artifact===clip.id) as HTMLElement
       if(!card){card=results.player(clip,clip.device);card.dataset.artifact=clip.id;root.current!.append(card)}
-      card.querySelector('strong')!.textContent=`${clip.device} · ${clip.start}`;const link=card.querySelector('a')!;link.textContent=download;link.setAttribute('aria-label',download)}
+      card.querySelector('strong')!.textContent=`${clip.device} · ${clip.start}`;const link=card.querySelector('a')!;link.textContent=download;link.setAttribute('aria-label',download)
+      let save=card.querySelector<HTMLButtonElement>('[data-save-folder]');if(onSave){if(!save){save=document.createElement('button');save.type='button';save.dataset.saveFolder='';card.append(save)}save.textContent=i18n.t('ui.saveToFolder',{},'Save MP4…');save.onclick=()=>onSave(clip)}else save?.remove()}
     for(const card of [...root.current!.children] as HTMLElement[]) if(!keys.has(card.dataset.artifact!)) card.remove()
-  },[clips,i18n,download])
+  },[clips,i18n,download,onSave])
   return <div className="player-grid" ref={root}/>
 }
 
@@ -131,13 +150,12 @@ export async function readPlaybackParts(response:Response,onPart:(part:MediaPart
   }
 }
 
-function HistoricalPlayer({input,range,rangeMatches,authenticated,c,showError,onSerialLock,onRecoverSerial}:{input:WindowInput;range:any;rangeMatches:boolean;authenticated:boolean;c:any;showError:(error:any)=>string;onSerialLock:(serial?:string)=>void;onRecoverSerial:(serial:string)=>void}){
+function HistoricalPlayer({input,range,rangeMatches,previewTarget,authenticated,c,showError,onSerialLock,onRecoverSerial}:{input:WindowInput;range:any;rangeMatches:boolean;previewTarget?:PreviewTarget;authenticated:boolean;c:any;showError:(error:any)=>string;onSerialLock:(serial?:string)=>void;onRecoverSerial:(serial:string)=>void}){
   const canvas=useRef<HTMLCanvasElement>(null),generation=useRef(0),streamGeneration=useRef(0),identityGeneration=useRef(0),current=useRef<Playback>(),ownerSerial=useRef<string>(),visibleSerial=useRef(input.serial),terminal=useRef(false),paused=useRef(false),resumeAcknowledged=useRef(true),stream=useRef<AbortController>(),decoding=useRef(false),pending=useRef<(MediaPart&{generation:number})>(),minimumEpoch=useRef(0),seekRunning=useRef(false),queuedSeek=useRef<WindowInput>();visibleSerial.current=input.serial
   const [playback,setPlayback]=useState<Playback>(),[state,setState]=useState('idle'),[error,setError]=useState<any>(),[display,setDisplay]=useState<{source:number;sequence:number;epoch:number;latency:number}>(),[recovered,setRecovered]=useState(false)
-  const duration=rangeMatches?Date.parse(range.window.normalized.end)-Date.parse(range.window.normalized.start):0
-  const [startHour,startMinute]=input.start.split(':').map(Number),[endHour,endMinute]=input.end.split(':').map(Number),seekDuration=((endHour*60+endMinute)-(startHour*60+startMinute))*60000
-  const contained=Boolean(rangeMatches&&range.ranges?.some((item:any)=>Date.parse(item.start)<=Date.parse(range.window.normalized.start)&&Date.parse(item.end)>=Date.parse(range.window.normalized.end)))
-  const eligible=authenticated&&contained&&duration>=1000&&duration<=60000
+  const duration=previewTarget?previewTarget.end-previewTarget.start:0,seekDuration=duration
+  const contained=Boolean(rangeMatches&&previewTarget&&range.ranges?.some((item:any)=>Date.parse(item.start)<=previewTarget.start&&Date.parse(item.end)>=previewTarget.end))
+  const eligible=authenticated&&Boolean(previewTarget)&&contained&&duration>=1000&&duration<=60000
   const remember=(value:any)=>{try{localStorage.setItem(playbackStorageKey,JSON.stringify(value));return true}catch{return false}}
   const clearRemembered=()=>{try{localStorage.removeItem(playbackStorageKey)}catch{}}
   const clearSurface=()=>{generation.current++;pending.current=undefined;paused.current=true;setDisplay(undefined);const surface=canvas.current;if(!surface)return;surface.getContext('2d')?.clearRect(0,0,surface.width,surface.height);for(const key of Object.keys(surface.dataset))delete surface.dataset[key]}
@@ -199,7 +217,7 @@ function HistoricalPlayer({input,range,rangeMatches,authenticated,c,showError,on
         <button type="button" disabled={!authenticated||ownerSerial.current!==input.serial||seekDuration<1000||seekDuration>60000||!['playing','paused'].includes(state)} onClick={seek}>{c.seek}</button><button type="button" onClick={close}>{c.close}</button></>}
       {recovered&&playback?.media&&playback.state!=='failed'&&!isTerminal(playback)&&input.serial===ownerSerial.current&&scopeMatches(playback)&&<button type="button" onClick={()=>attach(playback,performance.now(),ownerSerial.current)}>{c.openRecovered}</button>}
     </div>
-    {!rangeMatches||duration<1000||duration>60000?<p role="status" className="state-warning">{c.playbackRange}</p>:!contained?<p role="status" className="state-warning">{c.playbackGap}</p>:null}
+    {!previewTarget?<p role="status" className="state-warning">{c.playbackNoSample}</p>:!rangeMatches||duration<1000||duration>60000?<p role="status" className="state-warning">{c.playbackRange}</p>:!contained?<p role="status" className="state-warning">{c.playbackGap}</p>:null}
     {recovered&&<p role="status">{c.recovered}</p>}{['loading','seeking'].includes(state)&&<p role="status">{c.waitingFrame}</p>}{state==='resuming'&&<p role="status">{c.resumeWaiting}</p>}
     {display&&<p className="playback-observation"><strong>{c.sourcePosition}:</strong> {new Date(display.source).toISOString()} · {c.frameSequence} {display.sequence} · {c.firstFrame}: {Math.round(display.latency)} ms</p>}
     <p className="normalized">{c.sourceCaution}</p>{error&&<p role="status" className="error">{showError(error)}</p>}
@@ -216,18 +234,24 @@ export function RecordingWorkbench({authenticated,language,catalog,inventoryRevi
   const [devices,setDevices]=useState<Device[]>([]),[discovery,setDiscovery]=useState<Discovery>(),[deviceError,setDeviceError]=useState<any>(),[deviceLoading,setDeviceLoading]=useState(false),[deviceLoaded,setDeviceLoaded]=useState(false)
   const [legacy,setLegacy]=useState<LegacyRecordings>(),[legacyError,setLegacyError]=useState<any>(),[eventSearching,setEventSearching]=useState(false)
   const [confirmedEvent,setConfirmedEvent]=useState('')
+  const [eventPreviewId,setEventPreviewId]=useState<string>(),[eventPreparingId,setEventPreparingId]=useState<string>()
+  const [eventPreviewFailure,setEventPreviewFailure]=useState<{recordId:string;message:string;messageI18n?:LegacyRecordings['messageI18n']}>()
   const [range,setRange]=useState<any>(),[rangeError,setRangeError]=useState<any>(),[rangeLoading,setRangeLoading]=useState(false)
   const [exportError,setExportError]=useState<any>(),[submitting,setSubmitting]=useState(false),[acknowledged,setAcknowledged]=useState(false),[notice,setNotice]=useState('')
+  const [folderError,setFolderError]=useState(''),[folderNotice,setFolderNotice]=useState('')
   const [storageOk,setStorageOk]=useState(()=>saveStore(initial.intent,initial.jobIds))
   const [playbackSerial,setPlaybackSerial]=useState<string>()
   const recoveryStarted=useRef(false)
   const jobRequests=useRef<Record<string,Promise<boolean>>>({})
   const acceptEventResults=useRef(true)
+  const pendingEventFiles=useRef(new Map<string,{file:Awaited<ReturnType<typeof chooseExportFile>>;serial:string;recordId:string}>())
+  const savingEventFiles=useRef(new Set<string>())
   const i18n=useMemo(()=>({t:(key:string,params:Record<string,any>={},fallback=key)=>(catalog[key]||fallback).replace(/\{(\w+)\}/g,(_:string,k:string)=>String(params[k]??''))}),[catalog])
   const candidates=devices.filter(device=>device.recordingExport.supported||['verified','protocol_hint'].includes(device.capabilities?.eventRecordings?.status))
   const selected=candidates.find(device=>device.serial===input.serial)
   const changed=Boolean(intent&&fingerprint(intent.input)!==fingerprint(input))
   const rangeMatches=Boolean(selected&&range?.request===fingerprint(input))
+  const previewTarget=rangeMatches?previewTargetFor(range,input):undefined
   const eventRequest=eventFingerprint(input.serial,input)
   const legacyMatches=Boolean(authenticated&&selected&&legacy?.query&&eventFingerprint(legacy.query.serial,legacy.query.window.input)===eventRequest)
   const eventConfirmed=legacyMatches&&confirmedEvent===eventRequest
@@ -239,12 +263,18 @@ export function RecordingWorkbench({authenticated,language,catalog,inventoryRevi
     if(error.code==='INTENT_CHANGED')return c.changed
     if(error.code==='STORAGE_REQUIRED')return c.storage
     if(error.code==='RESPONSE_LOST')return c.lost
+    if(error.code==='SAVE_FILE_PICKER_UNAVAILABLE')return c.folderUnsupported
+    if(error.code==='EXPORT_FILE_UNAVAILABLE')return c.folderSaveFailed
     if(error.code==='INVALID_WINDOW'&&input.end<=input.start)return c.crossMidnight
     if(typeof error.code==='string'&&catalog['ui.error.'+error.code])return catalog['ui.error.'+error.code]
     if(typeof error.code==='string'&&catalog[error.code])return catalog[error.code]
     return error.message||catalog['ui.error.SERVICE_UNAVAILABLE']||'Request failed'
   }
-  const update=(field:keyof WindowInput,value:string)=>{setInput(current=>({...current,[field]:value}));setAcknowledged(false);setNotice('')}
+  const saveJobArtifact=useCallback(async(artifact:Artifact,job:Job)=>{setFolderError('');setFolderNotice('')
+    try{const file=await chooseExportFile(jobOutputName(artifact,job));if(!file)return;await saveArtifactToFile(file,artifact.url);setFolderNotice(c.savedToFolder)}
+    catch(error){setFolderError(showError(fault(error))||c.folderSaveFailed)}
+  },[c])
+  const update=(field:keyof WindowInput,value:string)=>{setInput(current=>({...current,[field]:value}));setAcknowledged(false);setNotice('');setEventPreviewId(undefined);setEventPreparingId(undefined);setEventPreviewFailure(undefined);setFolderError('');setFolderNotice('')}
   const recoverPlaybackSerial=(serial:string)=>{setInput(current=>current.serial===serial?current:{...current,serial});setPlaybackSerial(serial)}
   const remember=(next:Intent|undefined,ids:string[])=>{setIntent(next);setJobIds(ids);if(!saveStore(next,ids))setStorageOk(false)}
   const fetchDevices=async()=>{setDevices([]);setDeviceLoaded(false);setRange(undefined);setRangeError(undefined)
@@ -260,20 +290,58 @@ export function RecordingWorkbench({authenticated,language,catalog,inventoryRevi
   const acceptJob=(job:Job,baseIntent:Intent,baseIds=jobIds)=>{const ids=[...new Set([...baseIds,job.jobId])],next={...baseIntent,submitted:false,jobId:job.jobId};setJobs(current=>({...current,[job.jobId]:job}));remember(next,ids)}
   const sendIntent=async(next:Intent,baseIds=jobIds)=>{setSubmitting(true);setExportError(undefined)
     try{const value=await api.export(next.requestId,next.input);acceptJob(value.job,next,baseIds);setNotice(value.reused?c.existing:'')}
-    catch(error){const definite=(error as any)?.body!==undefined;if(definite)remember({...next,submitted:false},baseIds);setExportError(definite?fault(error):{code:'RESPONSE_LOST'})}finally{setSubmitting(false)}}
+    catch(error){const definite=(error as any)?.body!==undefined;if(definite){remember({...next,submitted:false},baseIds)}setExportError(definite?fault(error):{code:'RESPONSE_LOST'})}finally{setSubmitting(false)}}
 
   useEffect(()=>{fetchDevices()},[authenticated,inventoryRevision])
   useEffect(()=>{fetchLegacy();fetchJobs();const timer=setInterval(()=>{fetchLegacy();fetchJobs()},1200);return()=>clearInterval(timer)},[jobIds.join('|')])
   useEffect(()=>{if(candidates.length===1&&!input.serial&&!intent)setInput(current=>({...current,serial:candidates[0].serial}))},[candidates.length])
   useEffect(()=>{if(!recoveryStarted.current&&initial.intent?.submitted&&!initial.intent.jobId){recoveryStarted.current=true;sendIntent(initial.intent,initial.jobIds)}},[])
+  useEffect(()=>{
+    if(eventPreparingId&&legacy&&!legacy.busy){
+      const ready=legacy.saved.some(clip=>clip.serial===input.serial&&clip.recordId===eventPreparingId)
+      if(ready)setEventPreparingId(undefined)
+      else if(legacy.messageI18n?.key!=='service.recordings.exporting'){
+        setEventPreparingId(undefined)
+        setEventPreviewFailure({recordId:eventPreparingId,message:legacy.message,messageI18n:legacy.messageI18n})
+      }
+    }
+    if(!legacy)return
+    for(const [key,pending] of pendingEventFiles.current){
+      const clip=legacy.saved.find(item=>item.serial===pending.serial&&item.recordId===pending.recordId)
+      if(!clip){if(!legacy.busy&&legacy.query?.serial===pending.serial&&legacy.messageI18n?.key!=='service.recordings.exporting'){pendingEventFiles.current.delete(key);setFolderError(c.folderSaveFailed)}continue}
+      if(savingEventFiles.current.has(key)||!pending.file)continue
+      savingEventFiles.current.add(key)
+      void saveArtifactToFile(pending.file,clip.url).then(()=>setFolderNotice(c.savedToFolder))
+        .catch(error=>setFolderError(showError(fault(error))||c.folderSaveFailed))
+        .finally(()=>{savingEventFiles.current.delete(key);pendingEventFiles.current.delete(key)})
+    }
+  },[legacy,eventPreparingId,input.serial,c])
 
   const waitForLegacy=async()=>{for(let count=0;count<100;count++){const value=await api.recordings();receiveLegacy(value);if(!value.busy)return value;await new Promise(resolve=>setTimeout(resolve,100))}}
-  const findEvents=async()=>{setEventSearching(true);acceptEventResults.current=false;setConfirmedEvent('');setLegacyError(undefined)
+  const findEvents=async()=>{setEventSearching(true);acceptEventResults.current=false;setConfirmedEvent('');setEventPreviewId(undefined);setEventPreparingId(undefined);setEventPreviewFailure(undefined);setLegacyError(undefined);setFolderError('');setFolderNotice('')
     try{await api.eventQuery(input);acceptEventResults.current=true;setConfirmedEvent('');await waitForLegacy()}catch(error){setLegacyError(fault(error))}finally{setEventSearching(false)}}
-  const downloadEvent=async(id:string,expectedQuery:ExpectedQuery)=>{setLegacyError(undefined);try{await api.eventDownload(id,expectedQuery);await waitForLegacy()}catch(error){setLegacyError(fault(error))}}
+  const loadEventClip=async(id:string,expectedQuery:ExpectedQuery)=>{setEventPreviewId(id);setLegacyError(undefined);setFolderError('')
+    setEventPreviewFailure(undefined)
+    const saved=legacy?.saved.find(clip=>clip.serial===input.serial&&clip.recordId===id);if(saved){setEventPreparingId(undefined);return true}
+    setEventPreparingId(id)
+    try{await api.eventDownload(id,expectedQuery);const value=await api.recordings();receiveLegacy(value);if(!value.busy&&!value.saved.some(clip=>clip.serial===input.serial&&clip.recordId===id))setEventPreviewFailure({recordId:id,message:value.message,messageI18n:value.messageI18n});setEventPreparingId(value.busy?id:undefined);return true}
+    catch(error){const failure=fault(error);setLegacyError(failure);setEventPreviewFailure({recordId:id,message:showError(failure)});setEventPreparingId(undefined);return false}}
+  const previewEvent=(id:string,expectedQuery:ExpectedQuery)=>{setEventPreviewId(id);if(!legacy?.saved.some(clip=>clip.serial===input.serial&&clip.recordId===id))void loadEventClip(id,expectedQuery)}
+  const exportEvent=async(id:string,expectedQuery:ExpectedQuery)=>{setFolderError('');setFolderNotice('')
+    const start=legacy?.records.find(record=>record.id===id)?.start.slice(0,19).replace(/[T:]/g,'-')||id
+    let file:Awaited<ReturnType<typeof chooseExportFile>>;try{file=await chooseExportFile(`eufy-${input.serial}-${start}.mp4`)}catch(error){setFolderError(showError(fault(error))||c.folderSaveFailed);return}if(!file)return
+    const clip=legacy?.saved.find(item=>item.serial===input.serial&&item.recordId===id)
+    if(clip){try{await saveArtifactToFile(file,clip.url);setFolderNotice(c.savedToFolder)}catch(error){setFolderError(showError(fault(error))||c.folderSaveFailed)}return}
+    const key=`${input.serial}:${id}`;pendingEventFiles.current.set(key,{file,serial:input.serial,recordId:id})
+    if(!await loadEventClip(id,expectedQuery))pendingEventFiles.current.delete(key)
+  }
+  const saveSavedEvent=useCallback(async(clip:LegacyRecordings['saved'][number])=>{setFolderError('');setFolderNotice('')
+    try{const file=await chooseExportFile(eventOutputName(clip));if(!file)return;await saveArtifactToFile(file,clip.url);setFolderNotice(c.savedToFolder)}
+    catch(error){setFolderError(showError(fault(error))||c.folderSaveFailed)}
+  },[c])
   const findRanges=async()=>{setRangeLoading(true);setRange(undefined);setRangeError(undefined);try{const value=await api.ranges(input);setRange({...value,request:fingerprint(input)})}catch(error){setRangeError(fault(error))}finally{setRangeLoading(false)}}
   const submitExport=async()=>{
-    setNotice('')
+    setNotice('');setFolderNotice('');setFolderError('')
     if(!storageOk)return setExportError({code:'STORAGE_REQUIRED'})
     if(changed&&!acknowledged)return setExportError({code:'INTENT_CHANGED'})
     if(intent&&!changed&&intent.jobId){const [refreshed]=await fetchJobs([intent.jobId]);if(refreshed){setExportError(undefined);setNotice(c.existing)}return}
@@ -308,19 +376,32 @@ export function RecordingWorkbench({authenticated,language,catalog,inventoryRevi
         {legacyStatusVisible&&<p role="status">{legacy!.messageI18n?i18n.t(legacy!.messageI18n.key,legacy!.messageI18n.params,legacy!.message):legacy!.message}</p>}
         {legacy?.query&&!legacyMatches&&<p className="state-warning">{c.requeryEvents}</p>}
         {legacy?.query&&legacyMatches&&<p className="normalized">{catalog['ui.normalizedWindow']?.replace('{start}',legacy.query.window.normalized.start).replace('{end}',legacy.query.window.normalized.end).replace('{timezone}',legacy.query.window.normalized.timezone)}</p>}
-        {eventConfirmed&&!eventSearching&&!legacy?.busy&&(legacy!.records.length?<><p>{c.eventCount(legacy!.records.length)}</p><ol>{legacy!.records.map(record=><li key={record.id}>{record.start} — {record.end} <button type="button" onClick={()=>downloadEvent(record.id,legacyExpected!)}>{c.exportEvent}</button></li>)}</ol></>:<p>{c.noEvents}</p>)}
+        {eventConfirmed&&!eventSearching&&(legacy!.records.length?<><p>{c.eventCount(legacy!.records.length)}</p><ol className="event-record-list">{legacy!.records.map(record=>{
+          const clip=legacy!.saved.find(item=>item.serial===input.serial&&item.recordId===record.id),failed=eventPreviewFailure?.recordId===record.id
+          return <li key={record.id} className={eventPreviewId===record.id?'selected':''}>
+            <div className="event-record-row"><strong>{record.start} — {record.end}</strong><div><button type="button" disabled={Boolean(legacy?.busy)||Boolean(eventPreparingId)} onClick={()=>previewEvent(record.id,legacyExpected!)}>{eventPreparingId===record.id?c.working:c.previewEvent}</button> <button type="button" disabled={Boolean(legacy?.busy)||Boolean(eventPreparingId)} onClick={()=>legacyExpected&&void exportEvent(record.id,legacyExpected)}>{c.exportEvent}</button></div></div>
+            {(eventPreviewId===record.id||clip)&&<div className="event-preview-grid" role="group" aria-label={`${c.eventPreview} · ${record.start}`}><h4>{c.eventPreview}</h4>{clip?<><video controls preload="metadata" src={clip.url} aria-label={`${selected?.name||input.serial} · ${clip.start}`}/><a href={`${clip.url}?download`}>{c.savedDownload}</a></>
+              :<p role="status" className={`event-preview-placeholder${failed?' error':''}`}>{eventPreparingId===record.id?c.preparingPreview:failed?(eventPreviewFailure!.messageI18n?i18n.t(eventPreviewFailure!.messageI18n.key,eventPreviewFailure!.messageI18n.params,eventPreviewFailure!.message):eventPreviewFailure!.message):c.previewUnavailable}</p>}</div>
+            }
+          </li>
+        })}</ol>
+        </>:<p>{c.noEvents}</p>)}
       </section>
       <section className="card result-section" role="region" aria-label={c.continuous}><h3>{c.continuous}</h3>
         <button type="button" disabled={!authenticated||!selected||rangeLoading} onClick={findRanges}>{rangeLoading?c.working:c.check}</button>
         {rangeError&&<div role="status" className="error">{showError(rangeError)} <button type="button" onClick={findRanges}>{c.retry}</button></div>}
         {rangeMatches&&<><Timeline value={range} i18n={i18n} label={selected?.name||input.serial}/><p>{range.ranges.length?c.available:c.noContinuous}</p>
-          <button type="button" disabled={submitting||!range.ranges.length} onClick={submitExport}>{c.exportContinuous}</button></>}
-        <HistoricalPlayer input={input} range={range} rangeMatches={rangeMatches} authenticated={authenticated} c={c} showError={showError} onSerialLock={setPlaybackSerial} onRecoverSerial={recoverPlaybackSerial}/>
+          <p className="normalized">{c.previewSample}: {previewTarget?`${previewTarget.input.day} · ${previewTarget.input.start}–${previewTarget.input.end}`:c.playbackNoSample}</p></>}
+        <div className="continuous-preview-grid">
+          <HistoricalPlayer input={previewTarget?.input||input} range={range} rangeMatches={rangeMatches} previewTarget={previewTarget} authenticated={authenticated} c={c} showError={showError} onSerialLock={setPlaybackSerial} onRecoverSerial={recoverPlaybackSerial}/>
+          {rangeMatches&&<aside className="continuous-export-pane"><h4>{c.exportContinuous}</h4><p>{c.exportHint}</p><button type="button" disabled={submitting||!range?.ranges?.length} onClick={submitExport}>{submitting?c.working:c.exportContinuous}</button></aside>}
+        </div>
         {changed&&rangeMatches&&<label className="acknowledge"><input type="checkbox" checked={acknowledged} onChange={event=>setAcknowledged(event.target.checked)}/>{c.acknowledge}</label>}
         {intent&&<p><strong>{c.intent}:</strong> <code>{intent.requestId}</code></p>}{exportError&&<p role="status" className="error">{showError(exportError)}</p>}{notice&&<p role="status">{notice}</p>}
       </section>
     </div>
-    <section className="result-section" aria-label={c.jobs}><h3>{c.jobs}</h3>{jobIds.map(id=><React.Fragment key={id}>{jobErrors[id]&&<p role="status" className="error">{showError(jobErrors[id])}</p>}{jobs[id]&&<JobResultCard job={jobs[id]} i18n={i18n}/>}</React.Fragment>)}</section>
-    <section className="result-section" aria-label={c.saved}><h3>{c.saved}</h3><p>{c.savedHint}</p>{legacy?.saved?.length?<SavedPlayers clips={legacy.saved} i18n={i18n} download={c.savedDownload}/>:null}</section>
+    {folderError&&<p role="status" className="error">{folderError}</p>}{folderNotice&&<p role="status">{folderNotice}</p>}
+    <section className="result-section" aria-label={c.jobs}><h3>{c.jobs}</h3>{jobIds.map(id=><React.Fragment key={id}>{jobErrors[id]&&<p role="status" className="error">{showError(jobErrors[id])}</p>}{jobs[id]&&<JobResultCard job={jobs[id]} i18n={i18n} onSaveArtifact={saveJobArtifact}/>}</React.Fragment>)}</section>
+    <section className="result-section" aria-label={c.saved}><h3>{c.saved}</h3><p>{c.savedHint}</p>{legacy?.saved?.length?<SavedPlayers clips={legacy.saved.filter(clip=>!eventConfirmed||clip.serial!==input.serial||!legacy.records.some(record=>record.id===clip.recordId))} i18n={i18n} download={c.savedDownload} onSave={saveSavedEvent}/>:null}</section>
   </section>
 }

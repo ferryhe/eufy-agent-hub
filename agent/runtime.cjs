@@ -36,7 +36,7 @@ function createRecordingAgent(options = {}) {
     ['job_artifacts', 'Read registered artifacts and authoritative complete/partial/failed result.', z.object({ jobId: z.string() }), x => client.artifacts(x)],
   ];
   const agent = new Agent({ name: 'Recording assistant', instructions,
-    model: options.model || process.env.EUFY_AGENT_MODEL || 'gpt-4.1-mini',
+    model: options.model || process.env.EUFY_AGENT_MODEL || 'gpt-6-luna',
     modelSettings: { maxTokens, parallelToolCalls: false, store: false, timeoutMs: 30000 },
     tools: definitions.map(([name, description, parameters, execute]) => tool({ name, description, parameters,
       execute: async input => {
