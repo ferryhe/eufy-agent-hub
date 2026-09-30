@@ -69,11 +69,12 @@ export function createResults({ document, i18n, onSave }) {
     for (const artifact of view.videos) {
       keys.add(artifact.id);
       let existing = [...players.children].find(child => child.dataset.artifact === artifact.id);
-      if (!existing) { existing = player(artifact, artifact.name, () => onSave?.(artifact, job)); existing.dataset.artifact = artifact.id; players.append(existing); }
+      if (!existing) { existing = player(artifact, artifact.name, onSave && (() => onSave(artifact, job))); existing.dataset.artifact = artifact.id; players.append(existing); }
       existing.querySelector('strong').textContent = `${artifact.name} · ${t(`ui.job.${artifact.outcome}`)}`;
       existing.querySelector('a').textContent = t('ui.downloadFile');
-      const save = existing.querySelector('[data-save-folder]');
-      if (save) { save.textContent = t('ui.saveToFolder', {}, 'Save MP4…'); save.onclick = () => onSave?.(artifact, job); }
+      let save = existing.querySelector('[data-save-folder]');
+      if (onSave) { if (!save) { save = node('button', t('ui.saveToFolder', {}, 'Save MP4…')); save.type = 'button'; save.dataset.saveFolder = ''; existing.append(save); } save.textContent = t('ui.saveToFolder', {}, 'Save MP4…'); save.onclick = () => onSave(artifact, job); }
+      else save?.remove();
     }
     for (const child of [...players.children]) if (!keys.has(child.dataset.artifact)) child.remove();
   }

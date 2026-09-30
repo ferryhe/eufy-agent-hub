@@ -3,13 +3,13 @@ const assert = require('node:assert/strict');
 const { parseHTML } = require('linkedom');
 const fs = require('node:fs');
 const path = require('node:path');
-async function setup() {
+async function setup(onSave) {
   const { createI18n } = await import('../i18n/i18n.mjs');
   const { createResults } = await import('./results.mjs');
   const { document } = parseHTML('<html><body></body></html>');
   const i18n = createI18n({ catalogs: Object.fromEntries(['en', 'zh-CN'].map(locale => [locale,
     JSON.parse(fs.readFileSync(path.join(__dirname, `../i18n/ui.${locale}.json`)))])) });
-  return { document, i18n, components: createResults({ document, i18n }) };
+  return { document, i18n, components: createResults({ document, i18n, onSave }) };
 }
 const window = { input: { day: '2026-08-27', start: '16:30', end: '16:31' },
   normalized: { start: '2026-08-27T20:30:00Z', end: '2026-08-27T20:31:00Z', timezone: 'America/Toronto' } };
@@ -31,6 +31,7 @@ test('job shows honest partial and preserves the same registered player across p
     error: { code: 'PARTIAL_RECORDING', message: 'Missing coverage' }, result: { outcome: 'partial' } },
     videos: [{ id: 'media', name: 'partial.mp4', outcome: 'partial', url: '/api/v1/jobs/job-1/artifacts/media' }] };
   components.updateJob(card, partial);
+  assert.equal(card.querySelector('[data-save-folder]'), null, 'jobs without a save handler do not show a dead button');
   assert.match(card.textContent, /Partial — playable footage is not complete/);
   const video = card.querySelector('video'); video.currentTime = 17;
   assert.equal(video.src, partial.videos[0].url); assert.equal(card.querySelector('a').href, partial.videos[0].url + '?download');
@@ -42,6 +43,22 @@ test('job shows honest partial and preserves the same registered player across p
   assert.equal(card.querySelector('details').hasAttribute('open'), true);
   assert.match(card.querySelector('pre').textContent, /requestedSeconds.*60/);
   assert.match(card.querySelector('pre').textContent, /13 second gap/);
+});
+
+test('job MP4 save action appears only while a save handler is available', async () => {
+  const { createResults } = await import('./results.mjs');
+  let saved;
+  const { components, document, i18n } = await setup((artifact, job) => { saved = { artifact, job }; });
+  const view = { status: 'complete', job: { jobId: 'job-2', serial: 'camera', stage: 'done', progress: 1 }, videos: [
+    { id: 'media-2', name: 'recording.mp4', outcome: 'complete', url: '/api/v1/jobs/job-2/artifacts/media-2' },
+  ] };
+  const card = components.job(view);
+  card.querySelector('[data-save-folder]').click();
+  assert.deepEqual(saved, { artifact: view.videos[0], job: view.job });
+
+  const withoutSave = createResults({ document, i18n });
+  withoutSave.updateJob(card, view);
+  assert.equal(card.querySelector('[data-save-folder]'), null);
 });
 
 test('shared job cards render stopping and interrupted states without claiming terminal success', async () => {

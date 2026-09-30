@@ -154,7 +154,10 @@ function HistoricalPlayer({input,range,rangeMatches,previewTarget,authenticated,
   const canvas=useRef<HTMLCanvasElement>(null),generation=useRef(0),streamGeneration=useRef(0),identityGeneration=useRef(0),current=useRef<Playback>(),ownerSerial=useRef<string>(),visibleSerial=useRef(input.serial),terminal=useRef(false),paused=useRef(false),resumeAcknowledged=useRef(true),stream=useRef<AbortController>(),decoding=useRef(false),pending=useRef<(MediaPart&{generation:number})>(),minimumEpoch=useRef(0),seekRunning=useRef(false),queuedSeek=useRef<WindowInput>();visibleSerial.current=input.serial
   const [playback,setPlayback]=useState<Playback>(),[state,setState]=useState('idle'),[error,setError]=useState<any>(),[display,setDisplay]=useState<{source:number;sequence:number;epoch:number;latency:number}>(),[recovered,setRecovered]=useState(false)
   const duration=previewTarget?previewTarget.end-previewTarget.start:0
-  const [startHour,startMinute]=input.start.split(':').map(Number),[endHour,endMinute]=input.end.split(':').map(Number),seekDuration=((endHour*60+endMinute)-(startHour*60+startMinute))*60000
+  const dayEpoch=Date.parse(`${input.day}T00:00:00Z`),validDay=/^\d{4}-\d{2}-\d{2}$/.test(input.day)&&Number.isFinite(dayEpoch)&&new Date(dayEpoch).toISOString().slice(0,10)===input.day
+  const validTimes=/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(input.start)&&/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(input.end)
+  const [startHour,startMinute]=input.start.split(':').map(Number),[endHour,endMinute]=input.end.split(':').map(Number),seekDuration=validTimes?((endHour*60+endMinute)-(startHour*60+startMinute))*60000:NaN
+  const seekAllowed=validDay&&Number.isFinite(seekDuration)&&seekDuration>=1000&&seekDuration<=60000
   const contained=Boolean(rangeMatches&&previewTarget&&range.ranges?.some((item:any)=>Date.parse(item.start)<=previewTarget.start&&Date.parse(item.end)>=previewTarget.end))
   const eligible=authenticated&&Boolean(previewTarget)&&contained&&duration>=1000&&duration<=60000
   const remember=(value:any)=>{try{localStorage.setItem(playbackStorageKey,JSON.stringify(value));return true}catch{return false}}
@@ -215,7 +218,7 @@ function HistoricalPlayer({input,range,rangeMatches,previewTarget,authenticated,
     <div className="playback-controls">
       {!playback||isTerminal(playback)?<button type="button" disabled={!eligible} onClick={start}>{c.play}</button>:<>
         {state==='paused'?<button type="button" onClick={resumePlayback}>{c.resume}</button>:<button type="button" disabled={!['playing','loading'].includes(state)} onClick={pausePlayback}>{c.pause}</button>}
-        <button type="button" disabled={!authenticated||ownerSerial.current!==input.serial||seekDuration<1000||seekDuration>60000||!['playing','paused'].includes(state)} onClick={seek}>{c.seek}</button><button type="button" onClick={close}>{c.close}</button></>}
+        <button type="button" disabled={!authenticated||ownerSerial.current!==input.serial||!seekAllowed||!['playing','paused'].includes(state)} onClick={seek}>{c.seek}</button><button type="button" onClick={close}>{c.close}</button></>}
       {recovered&&playback?.media&&playback.state!=='failed'&&!isTerminal(playback)&&input.serial===ownerSerial.current&&scopeMatches(playback)&&<button type="button" onClick={()=>attach(playback,performance.now(),ownerSerial.current)}>{c.openRecovered}</button>}
     </div>
     {!previewTarget?<p role="status" className="state-warning">{c.playbackNoSample}</p>:!rangeMatches||duration<1000||duration>60000?<p role="status" className="state-warning">{c.playbackRange}</p>:!contained?<p role="status" className="state-warning">{c.playbackGap}</p>:null}
