@@ -53,6 +53,7 @@ function installRecordingRoutes(server, session, options = {}) {
   const recordings = options.recordings || new LocalRecordings(session);
   const timezone = resolveTimezone(options.defaultTimezone);
   const state = { busy: false, timezone, message: '选择设备和时间，查询事件录像。', query: null, records: [], saved: [] };
+  let stopping = false, active;
   state.messageI18n = messageI18n('service.recordings.idle');
   const media = new Map();
   function addSaved(clip, device, serial, manifestTimezone) {
@@ -90,6 +91,7 @@ function installRecordingRoutes(server, session, options = {}) {
         if (req.method === 'POST' && route === '/login') { recordings.close(); state.records = []; state.query = null; }
         return original(req, res);
       }
+      if (stopping && req.method === 'POST') return send(503, errorBody(serviceError('服务正在停止。', 'service.stopping')));
       if (req.method === 'GET' && route === '/recordings/status') return send(200, state);
       if (['GET', 'HEAD'].includes(req.method) && route.startsWith('/recordings/media/')) {
         const file = media.get(route.slice('/recordings/media/'.length));
@@ -102,6 +104,7 @@ function installRecordingRoutes(server, session, options = {}) {
       if (state.busy || options.isBusy?.() || session.state.phase === 'busy') return send(409, errorBody(serviceError('正在处理，请稍候。', 'service.busy')));
       let body = '';
       for await (const chunk of req) { body += chunk; if (body.length > 4096) return send(413, errorBody(serviceError('输入过长。', 'service.inputTooLong'))); }
+      if (stopping) return send(503, errorBody(serviceError('服务正在停止。', 'service.stopping')));
       if (!isAuthenticated(session)) return send(401, errorBody(serviceError('请先登录。', 'service.auth.loginRequired')));
       let data, query, selected;
       try {
@@ -119,7 +122,7 @@ function installRecordingRoutes(server, session, options = {}) {
       setMessage(state, query ? '正在读取 HomeBase 的事件录像索引…' : '正在下载并转换录像，完成后可播放…',
         messageI18n(query ? 'service.recordings.querying' : 'service.recordings.exporting'));
       send(202, { ok: true, timezone: (query || state.query).timezone, window: (query || state.query).window, coverage: null });
-      try {
+      active = (async () => { try {
         if (query) {
           state.records = []; state.query = query;
           const records = await recordings.listWindow(query.serial, query.window);
@@ -143,13 +146,14 @@ function installRecordingRoutes(server, session, options = {}) {
           setMessage(state, '录像已保存，并通过完整解码检查。可在下方播放或下载。', messageI18n('service.recordings.saved'));
         }
       } catch (error) { setMessage(state, error.message, error.i18n); }
-      finally { state.busy = false; }
+      finally { state.busy = false; } })();
+      try { await active; } finally { active = null; }
     } catch (error) {
       if (!res.headersSent) send(500, errorBody(error));
       else res.destroy();
     }
   });
-  return { state, recordings };
+  return { state, recordings, async shutdown() { stopping = true; await active; } };
 }
 
 module.exports = { installRecordingRoutes, parseWindow, torontoTime, serveMedia };

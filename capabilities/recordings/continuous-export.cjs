@@ -39,11 +39,13 @@ function runProcess(executable, args, { directory, stage, signal }) {
 
 class ContinuousExportService {
   constructor({ session, outputRoot = path.join(OUTPUT, 'continuous-jobs'),
+    dataRoot = OUTPUT,
     python = process.env.EUFY_PYTHON || 'python', ffmpeg = process.env.EUFY_FFMPEG || 'ffmpeg',
     createCapture = () => new LocalContinuousRecordings(session), execute = runProcess } = {}) {
-    const relative = path.relative(OUTPUT, path.resolve(outputRoot));
+    const relative = path.relative(path.resolve(dataRoot), path.resolve(outputRoot));
     if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
-      throw new Error('Continuous job outputRoot must be a directory below this repository output/');
+      throw new Error(dataRoot === OUTPUT ? 'Continuous job outputRoot must be a directory below this repository output/'
+        : 'Continuous job outputRoot must be a directory below the configured data root');
     this.python = python; this.ffmpeg = ffmpeg; this.createCapture = createCapture; this.execute = execute;
     this.session = session;
     this.stopping = new AbortController();
@@ -104,7 +106,7 @@ class ContinuousExportService {
     };
     try {
       requireLogin();
-      await run('python-runtime', 0.02, this.python, ['-c', 'import av; print(av.__version__)']);
+      await run('python-runtime', 0.02, this.python, ['-B', '-c', 'import av; print(av.__version__)']);
       await run('ffmpeg-runtime', 0.03, this.ffmpeg, ['-version']);
       signal.throwIfAborted(); stage = 'capture'; updateProgress(stage, 0.05);
       requireLogin();
@@ -118,7 +120,7 @@ class ContinuousExportService {
         rangeGaps: completeness.rangeGaps };
       signal.throwIfAborted();
       if (completeness.status === 'failed') throw new Error(`No usable capture: ${completeness.reasons.join(', ')}`);
-      await run('mux', 0.55, this.python, [path.join(__dirname, 'mux.py'), directory, '--allow-partial']);
+      await run('mux', 0.55, this.python, ['-B', path.join(__dirname, 'mux.py'), directory, '--allow-partial']);
       const candidate = path.join(directory, 'playback.mp4');
       await run('convert', 0.65, this.ffmpeg, ['-hide_banner', '-nostdin', '-n', '-copyts', '-start_at_zero',
         '-i', path.join(directory, 'timed.ts'), '-map', '0:v:0', '-map', '0:a?',
@@ -128,7 +130,7 @@ class ContinuousExportService {
       await run('decode', 0.85, this.ffmpeg, ['-hide_banner', '-nostdin', '-v', 'error', '-xerror', '-i', candidate,
         '-map', '0:v:0', '-map', '0:a?', '-progress', 'pipe:1', '-f', 'null', '-']);
       // Decode timestamps too: FFmpeg progress alone can be dominated by the audio tail.
-      await run('timeline', 0.95, this.python, [path.join(__dirname, 'media-timeline.py'), directory]);
+      await run('timeline', 0.95, this.python, ['-B', path.join(__dirname, 'media-timeline.py'), directory]);
       media = JSON.parse(fs.readFileSync(path.join(directory, 'media-timeline.json'), 'utf8'));
       const progress = Object.fromEntries(fs.readFileSync(path.join(logs, 'decode.stdout.log'), 'utf8')
         .trim().split(/\r?\n/).map(line => line.split('=')));

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, type Artifact, type Device, type Discovery, type ExpectedQuery, type Job, type LegacyRecordings, type Playback, type WindowInput } from './client'
+import { api, type Artifact, type Device, type Discovery, type ExpectedQuery, type Job, type LegacyRecordings, type Playback, type VerificationScope, type WindowInput } from './client'
 import { createResults } from '../../components/results.mjs'
 import { JobResultCard } from './job-result'
 import { chooseExportFile, saveArtifactToFile } from './export-file'
@@ -41,6 +41,7 @@ const words = {
     firstFrame:'Measured browser first-frame latency', frameSequence:'Displayed frame', waitingFrame:'Waiting for a decodable keyframe…',
     resumeWaiting:'Resuming with a fresh decoder…', recovered:'A saved playback request was recovered. Open it explicitly to display media.', openRecovered:'Open recovered preview',
     playbackRange:'Direct preview requires a 1–60 second same-recording window.', playbackGap:'The selected target is not fully contained in one available recording. Older footage will not be substituted.',
+    playbackVerified:'Historical preview controls are verified for this exact device and firmware.', playbackUnverified:'Historical preview controls are unverified for this exact device and firmware. Preview is disabled.',
   },
   'zh-CN': {
     title:'录像工作台', intro:'选择常驻服务中的确切摄像头和同一天内的时间窗口。事件录像与连续录像范围是相互独立的结果。',
@@ -69,6 +70,7 @@ const words = {
     firstFrame:'浏览器实测首帧延迟', frameSequence:'已显示帧', waitingFrame:'正在等待可解码关键帧…',
     resumeWaiting:'正在用新解码器继续…', recovered:'已恢复保存的播放请求。请明确打开后再显示媒体。', openRecovered:'打开已恢复的预览',
     playbackRange:'直接预览要求 1–60 秒且完整位于同一条录像内。', playbackGap:'所选目标未完整落在一条可用录像内，不会用更早录像替代。',
+    playbackVerified:'此确切设备和固件的历史预览控制已验证。', playbackUnverified:'此确切设备和固件的历史预览控制尚未验证，预览已禁用。',
   },
 } as const
 
@@ -90,6 +92,8 @@ function fault(error:any) {
   return {code:body?.errorI18n?.key||'SERVICE_UNAVAILABLE',message:typeof body?.error==='string'?body.error:error?.message}
 }
 const eventFingerprint=(serial:string,window:{day:string;start:string;end:string;timezone:string|null})=>JSON.stringify([serial,window.day,window.start,window.end,window.timezone])
+const verificationScopeKey=(scope?:VerificationScope)=>scope?JSON.stringify([scope.serial,scope.model,scope.firmware.main,scope.firmware.secondary,
+  scope.homeBase?[scope.homeBase.serial,scope.homeBase.model,scope.homeBase.firmware.main,scope.homeBase.firmware.secondary]:null,scope.channel]):''
 const eventOutputName=(clip:LegacyRecordings['saved'][number])=>`eufy-${clip.serial||'camera'}-${clip.recordId}-${clip.start.slice(0,19).replace(/[T:]/g,'-')}.mp4`
 const jobOutputName=(artifact:Artifact,job:Job)=>`${job.result?.outcome==='partial'?'partial-':''}eufy-${job.serial}-${job.window.input.day}-${job.jobId.slice(0,8)}-${artifact.name}`
 function previewTargetFor(range:any,input:WindowInput):PreviewTarget|undefined {
@@ -128,7 +132,7 @@ function SavedPlayers({clips,i18n,download,onSave}:{clips:LegacyRecordings['save
 }
 
 type MediaPart={sessionId:string;requestId:string;mediaEpoch:number;frameSequence:number;sourceReceivedPositionMs:number;jpeg:Uint8Array}
-const playbackStorageKey='eufy-agent-hub.playback-intent'
+const playbackStorageKey='eufy-agent-hub.playback-intent',playbackStartTimeoutMs=60000
 const decoder=new TextDecoder('ascii',{fatal:true})
 const findHeaderEnd=(bytes:Uint8Array)=>{for(let i=0;i+3<bytes.length;i++)if(bytes[i]===13&&bytes[i+1]===10&&bytes[i+2]===13&&bytes[i+3]===10)return i;return -1}
 const appendBytes=(left:Uint8Array,right:Uint8Array)=>{const value=new Uint8Array(left.length+right.length);value.set(left);value.set(right,left.length);return value}
@@ -150,7 +154,7 @@ export async function readPlaybackParts(response:Response,onPart:(part:MediaPart
   }
 }
 
-function HistoricalPlayer({input,range,rangeMatches,previewTarget,authenticated,c,showError,onSerialLock,onRecoverSerial}:{input:WindowInput;range:any;rangeMatches:boolean;previewTarget?:PreviewTarget;authenticated:boolean;c:any;showError:(error:any)=>string;onSerialLock:(serial?:string)=>void;onRecoverSerial:(serial:string)=>void}){
+function HistoricalPlayer({input,range,rangeMatches,previewTarget,authenticated,inventorySettled,inventoryCurrent,verificationStatus,verificationScope,c,showError,onSerialLock,onRecoverSerial}:{input:WindowInput;range:any;rangeMatches:boolean;previewTarget?:PreviewTarget;authenticated:boolean;inventorySettled:boolean;inventoryCurrent:boolean;verificationStatus:string;verificationScope?:VerificationScope;c:any;showError:(error:any)=>string;onSerialLock:(serial?:string)=>void;onRecoverSerial:(serial:string)=>void}){
   const canvas=useRef<HTMLCanvasElement>(null),generation=useRef(0),streamGeneration=useRef(0),identityGeneration=useRef(0),current=useRef<Playback>(),ownerSerial=useRef<string>(),visibleSerial=useRef(input.serial),terminal=useRef(false),paused=useRef(false),resumeAcknowledged=useRef(true),stream=useRef<AbortController>(),decoding=useRef(false),pending=useRef<(MediaPart&{generation:number})>(),minimumEpoch=useRef(0),seekRunning=useRef(false),queuedSeek=useRef<WindowInput>();visibleSerial.current=input.serial
   const [playback,setPlayback]=useState<Playback>(),[state,setState]=useState('idle'),[error,setError]=useState<any>(),[display,setDisplay]=useState<{source:number;sequence:number;epoch:number;latency:number}>(),[recovered,setRecovered]=useState(false)
   const duration=previewTarget?previewTarget.end-previewTarget.start:0
@@ -159,14 +163,25 @@ function HistoricalPlayer({input,range,rangeMatches,previewTarget,authenticated,
   const [startHour,startMinute]=input.start.split(':').map(Number),[endHour,endMinute]=input.end.split(':').map(Number),seekDuration=validTimes?((endHour*60+endMinute)-(startHour*60+startMinute))*60000:NaN
   const seekAllowed=validDay&&Number.isFinite(seekDuration)&&seekDuration>=1000&&seekDuration<=60000
   const contained=Boolean(rangeMatches&&previewTarget&&range.ranges?.some((item:any)=>Date.parse(item.start)<=previewTarget.start&&Date.parse(item.end)>=previewTarget.end))
-  const eligible=authenticated&&Boolean(previewTarget)&&contained&&duration>=1000&&duration<=60000
+  const expectedScopeKey=verificationScopeKey(verificationScope),verified=inventoryCurrent&&verificationStatus==='verified'&&Boolean(expectedScopeKey)
+  const eligible=authenticated&&verified&&Boolean(previewTarget)&&contained&&duration>=1000&&duration<=60000
   const remember=(value:any)=>{try{localStorage.setItem(playbackStorageKey,JSON.stringify(value));return true}catch{return false}}
   const clearRemembered=()=>{try{localStorage.removeItem(playbackStorageKey)}catch{}}
   const clearSurface=()=>{generation.current++;pending.current=undefined;paused.current=true;setDisplay(undefined);const surface=canvas.current;if(!surface)return;surface.getContext('2d')?.clearRect(0,0,surface.width,surface.height);for(const key of Object.keys(surface.dataset))delete surface.dataset[key]}
   const isTerminal=(value:Playback)=>value.state==='closed'||value.cleanupComplete
-  const scopeMatches=(value:Playback,serial=ownerSerial.current)=>Boolean(serial&&value.verificationScope?.serial===serial)
+  const scopeMatches=(value:Playback,serial=ownerSerial.current)=>Boolean(verified&&serial&&value.verificationScope?.serial===serial&&verificationScopeKey(value.verificationScope)===expectedScopeKey)
   const visibleMatches=(value:Playback)=>scopeMatches(value)&&visibleSerial.current===ownerSerial.current
-  const rejectIdentity=(value:Playback)=>{current.current=value;setPlayback(value);setRecovered(false);clearSurface();setError({code:'CONTROL_SCOPE_CHANGED',message:'CONTROL_SCOPE_CHANGED'});setState('error')}
+  const scopeChanged={code:'CONTROL_SCOPE_CHANGED',message:'CONTROL_SCOPE_CHANGED'}
+  const revoke=async(value=current.current,sessionId=value?.sessionId,failure?:any,intent?:any)=>{const requestIdentity=intent?.requestId&&intent?.residentEpoch?{requestId:intent.requestId,residentEpoch:intent.residentEpoch}:undefined;identityGeneration.current++;streamGeneration.current++;stream.current?.abort();stream.current=undefined;terminal.current=true;current.current=undefined;setPlayback(undefined);setRecovered(false);clearSurface();clearRemembered();ownerSerial.current=undefined;onSerialLock(undefined);setState(failure?'error':'idle');setError(failure)
+    if(requestIdentity){const deadline=Date.now()+playbackStartTimeoutMs;let pendingCloseAttempted=false
+      while(Date.now()<deadline){let request;try{request=(await api.playbackRequest(requestIdentity.requestId,requestIdentity.residentEpoch)).request}catch(reason){const requestFailure=fault(reason);if(!failure){setError(requestFailure);setState('error')}return}
+        if(request.cleanupComplete)return;sessionId=request.sessionId||sessionId
+        if(request.state==='pending'&&(!sessionId||pendingCloseAttempted)){await new Promise(resolve=>setTimeout(resolve,250));continue}
+        if(request.state==='pending')pendingCloseAttempted=true
+        if(!sessionId)return;try{const closed=(await api.closePlayback(sessionId)).playback;if(closed.cleanupComplete)return}catch(reason){const closeFailure=fault(reason);if(closeFailure.code==='PLAYBACK_SESSION_NOT_FOUND')return;if(closeFailure.code!=='SERVICE_BUSY'){if(!failure)setError(closeFailure);return}}
+        await new Promise(resolve=>setTimeout(resolve,250))}return}
+    if(sessionId)try{await api.closePlayback(sessionId)}catch(reason){const closeFailure=fault(reason);if(closeFailure.code!=='PLAYBACK_SESSION_NOT_FOUND'&&!failure)setError(closeFailure)}}
+  const rejectIdentity=(value:Playback)=>{void revoke(value,value.sessionId,scopeChanged)}
   const retainOwner=(value:Playback,failure=value.error)=>{current.current=value;terminal.current=false;setPlayback(value);setRecovered(true);setError(failure||undefined);setState(failure?'error':value.state)}
   const finishTerminal=(value:Playback)=>{terminal.current=true;identityGeneration.current++;streamGeneration.current++;stream.current?.abort();stream.current=undefined;current.current=value;setPlayback(value);setRecovered(false);setError(value.error||undefined);clearSurface();clearRemembered();ownerSerial.current=undefined;onSerialLock(undefined);setState(value.error||value.state==='failed'?'error':'closed')}
   const releaseDeadIntent=(failure:any)=>{terminal.current=true;identityGeneration.current++;streamGeneration.current++;stream.current?.abort();stream.current=undefined;current.current=undefined;setPlayback(undefined);setRecovered(false);clearSurface();clearRemembered();ownerSerial.current=undefined;onSerialLock(undefined);setError(failure);setState('error')}
@@ -200,23 +215,32 @@ function HistoricalPlayer({input,range,rangeMatches,previewTarget,authenticated,
       if(token!==identityGeneration.current)return;if(!scopeMatches(value,intent.input.serial))return rejectIdentity(value)
       if(!isTerminal(value)){retainOwner(value,failure);return}}
     if(token!==identityGeneration.current)return;if(definitive)releaseDeadIntent(failure);else{setError(failure);setState('error')}}
-  useEffect(()=>{let active=true;try{const intent=JSON.parse(localStorage.getItem(playbackStorageKey)||'null');if(intent?.requestId&&intent?.residentEpoch&&intent?.input?.serial){ownerSerial.current=intent.input.serial;onRecoverSerial(intent.input.serial);const token=++identityGeneration.current;recover(intent,true).then(value=>{if(!active||token!==identityGeneration.current||ownerSerial.current!==intent.input.serial)return;if(!scopeMatches(value,intent.input.serial))rejectIdentity(value);else if(isTerminal(value))finishTerminal(value);else retainOwner(value)}).catch(reason=>{if(active&&token===identityGeneration.current)void recoveryFailure(reason,intent,token)})}}catch{}return()=>{active=false;stream.current?.abort();generation.current++;streamGeneration.current++;identityGeneration.current++}},[])
+  useEffect(()=>{let active=true,intent:any;try{intent=JSON.parse(localStorage.getItem(playbackStorageKey)||'null')}catch{}
+    if(inventorySettled&&!inventoryCurrent){void revoke(current.current,current.current?.sessionId||intent?.sessionId,undefined,intent);return()=>{active=false}}
+    if(!verificationScope){if(inventorySettled)void revoke(current.current,current.current?.sessionId||intent?.sessionId,undefined,intent);return()=>{active=false}}
+    if(!verified){void revoke(current.current,current.current?.sessionId||intent?.sessionId,undefined,intent);return()=>{active=false}}
+    if(current.current&&!scopeMatches(current.current)){void revoke(current.current,undefined,scopeChanged);return()=>{active=false}}
+    if(intent?.requestId&&intent?.residentEpoch&&intent?.input?.serial){ownerSerial.current=intent.input.serial;onRecoverSerial(intent.input.serial);const token=++identityGeneration.current;recover(intent,true).then(value=>{if(!active||token!==identityGeneration.current||ownerSerial.current!==intent.input.serial)return;if(!scopeMatches(value,intent.input.serial)){void revoke(value,undefined,scopeChanged);return}else if(isTerminal(value))finishTerminal(value);else retainOwner(value)}).catch(reason=>{if(active&&token===identityGeneration.current)void recoveryFailure(reason,intent,token)})}
+    return()=>{active=false;identityGeneration.current++}
+  },[expectedScopeKey,inventoryCurrent,inventorySettled,verificationStatus])
+  useEffect(()=>()=>{stream.current?.abort();generation.current++;streamGeneration.current++;identityGeneration.current++},[])
   const start=async()=>{if(!eligible)return;const serial=input.serial,token=++identityGeneration.current;ownerSerial.current=serial;onSerialLock(serial);terminal.current=false;streamGeneration.current++;clearSurface();setError(undefined);const startedAt=performance.now();let intent:any,submitted=false
     try{const residentEpoch=(await api.session()).residentEpoch,requestId=`playback-${crypto.randomUUID()}`;intent={requestId,residentEpoch,operation:'create',input:{...input}};if(!remember(intent))throw {code:'STORAGE_REQUIRED'};submitted=true
       const value=(await api.startPlayback(requestId,residentEpoch,input)).playback;if(token!==identityGeneration.current||ownerSerial.current!==serial)return;if(!scopeMatches(value,serial))return rejectIdentity(value);if(isTerminal(value))return finishTerminal(value);remember({...intent,sessionId:value.sessionId});if(value.state==='failed')return retainOwner(value);await attach(value,startedAt,serial)
     }catch(reason){if(submitted){try{const value=await recover(intent);if(token!==identityGeneration.current||ownerSerial.current!==serial)return;if(!scopeMatches(value,serial))return rejectIdentity(value);if(isTerminal(value))return finishTerminal(value);remember({...intent,sessionId:value.sessionId});if(value.state==='failed')return retainOwner(value);await attach(value,startedAt,serial);return}catch(recoveryReason){return await recoveryFailure(recoveryReason,intent,token)}}if(token!==identityGeneration.current)return;setError(fault(reason));setState('error');ownerSerial.current=undefined;onSerialLock(undefined)}}
-  const pausePlayback=async()=>{const value=current.current;if(!value)return;const token=identityGeneration.current,localStreamGeneration=streamGeneration.current,sessionId=value.sessionId;generation.current++;pending.current=undefined;paused.current=true;resumeAcknowledged.current=true;setState('pausing');setError(undefined);try{const next=(await api.pausePlayback(sessionId)).playback;if(token!==identityGeneration.current||localStreamGeneration!==streamGeneration.current||terminal.current||current.current?.sessionId!==sessionId)return;if(!scopeMatches(next))return rejectIdentity(next);if(isTerminal(next))return finishTerminal(next);current.current=next;setPlayback(next);setState('paused')}catch(reason){if(token===identityGeneration.current&&localStreamGeneration===streamGeneration.current&&!terminal.current){setError(fault(reason));setState('error')}}}
-  const resumePlayback=async()=>{const value=current.current;if(!value)return;const token=identityGeneration.current,localStreamGeneration=streamGeneration.current,sessionId=value.sessionId;generation.current++;pending.current=undefined;paused.current=false;resumeAcknowledged.current=false;minimumEpoch.current=(display?.epoch||value.media?.mediaEpoch||0)+1;setState('resuming');setError(undefined);try{const next=(await api.resumePlayback(sessionId)).playback;if(token!==identityGeneration.current||localStreamGeneration!==streamGeneration.current||terminal.current||current.current?.sessionId!==sessionId)return;if(!scopeMatches(next))return rejectIdentity(next);if(isTerminal(next))return finishTerminal(next);current.current=next;setPlayback(next);resumeAcknowledged.current=true;if(Number(canvas.current?.dataset.mediaEpoch)>=minimumEpoch.current)setState('playing')}catch(reason){if(token===identityGeneration.current&&localStreamGeneration===streamGeneration.current&&!terminal.current){resumeAcknowledged.current=true;setError(fault(reason));setState('error')}}}
-  const processSeek=async(first:WindowInput)=>{if(!playback)return;seekRunning.current=true;let target:WindowInput|undefined=first
+  const pausePlayback=async()=>{const value=current.current;if(!value||!scopeMatches(value))return;const token=identityGeneration.current,localStreamGeneration=streamGeneration.current,sessionId=value.sessionId;generation.current++;pending.current=undefined;paused.current=true;resumeAcknowledged.current=true;setState('pausing');setError(undefined);try{const next=(await api.pausePlayback(sessionId)).playback;if(token!==identityGeneration.current||localStreamGeneration!==streamGeneration.current||terminal.current||current.current?.sessionId!==sessionId)return;if(!scopeMatches(next))return rejectIdentity(next);if(isTerminal(next))return finishTerminal(next);current.current=next;setPlayback(next);setState('paused')}catch(reason){if(token===identityGeneration.current&&localStreamGeneration===streamGeneration.current&&!terminal.current){const failure=fault(reason);if(failure.code==='CONTROL_SCOPE_CHANGED')void revoke(value,sessionId,failure);else{setError(failure);setState('error')}}}}
+  const resumePlayback=async()=>{const value=current.current;if(!value||!scopeMatches(value))return;const token=identityGeneration.current,localStreamGeneration=streamGeneration.current,sessionId=value.sessionId;generation.current++;pending.current=undefined;paused.current=false;resumeAcknowledged.current=false;minimumEpoch.current=(display?.epoch||value.media?.mediaEpoch||0)+1;setState('resuming');setError(undefined);try{const next=(await api.resumePlayback(sessionId)).playback;if(token!==identityGeneration.current||localStreamGeneration!==streamGeneration.current||terminal.current||current.current?.sessionId!==sessionId)return;if(!scopeMatches(next))return rejectIdentity(next);if(isTerminal(next))return finishTerminal(next);current.current=next;setPlayback(next);resumeAcknowledged.current=true;if(Number(canvas.current?.dataset.mediaEpoch)>=minimumEpoch.current)setState('playing')}catch(reason){if(token===identityGeneration.current&&localStreamGeneration===streamGeneration.current&&!terminal.current){resumeAcknowledged.current=true;const failure=fault(reason);if(failure.code==='CONTROL_SCOPE_CHANGED')void revoke(value,sessionId,failure);else{setError(failure);setState('error')}}}}
+  const processSeek=async(first:WindowInput)=>{if(!playback||!scopeMatches(playback))return;seekRunning.current=true;let target:WindowInput|undefined=first
     try{while(target&&ownerSerial.current===target.serial){queuedSeek.current=undefined;streamGeneration.current++;clearSurface();setState('seeking');setError(undefined);const from=current.current!,serial=ownerSerial.current,token=++identityGeneration.current,residentEpoch=from.residentEpoch!,requestId=`playback-seek-${crypto.randomUUID()}`,intent={requestId,residentEpoch,operation:'seek',fromSessionId:from.sessionId,input:{...target}};remember(intent)
         try{const value=(await api.seekPlayback(from.sessionId,requestId,residentEpoch,target)).playback;if(token!==identityGeneration.current||ownerSerial.current!==serial)return;if(!scopeMatches(value,serial))return rejectIdentity(value);if(isTerminal(value))return finishTerminal(value);remember({...intent,sessionId:value.sessionId});if(value.state==='failed')return retainOwner(value);await attach(value,performance.now(),serial)}catch{try{const value=await recover(intent);if(token!==identityGeneration.current||ownerSerial.current!==serial)return;if(!scopeMatches(value,serial))return rejectIdentity(value);if(isTerminal(value))return finishTerminal(value);remember({...intent,sessionId:value.sessionId});if(value.state==='failed')return retainOwner(value);await attach(value,performance.now(),serial)}catch(recoveryReason){await recoveryFailure(recoveryReason,intent,token)}}target=queuedSeek.current}}
     finally{seekRunning.current=false}}
-  const seek=()=>{if(ownerSerial.current!==input.serial)return;const target={...input};if(seekRunning.current)queuedSeek.current=target;else void processSeek(target)}
+  const seek=()=>{if(ownerSerial.current!==input.serial||!current.current||!scopeMatches(current.current))return;const target={...input};if(seekRunning.current)queuedSeek.current=target;else void processSeek(target)}
   const close=async()=>{const value=current.current;if(!value)return;const token=++identityGeneration.current;streamGeneration.current++;clearSurface();setState('closing');setError(undefined);try{const next=(await api.closePlayback(value.sessionId)).playback;if(token!==identityGeneration.current)return;finishTerminal(next)}catch(reason){if(token===identityGeneration.current){setError(fault(reason));setState('error')}}}
   return <section className="historical-player" aria-labelledby="historical-player-title"><h4 id="historical-player-title">{c.preview}</h4><p>{c.previewHint}</p>
+    <p role="status" className={verified?'normalized':'state-warning'}>{verified?c.playbackVerified:c.playbackUnverified}</p>
     <canvas ref={canvas} width="960" height="540" tabIndex={0} aria-label={c.preview}/>
     <div className="playback-controls">
-      {!playback||isTerminal(playback)?<button type="button" disabled={!eligible} onClick={start}>{c.play}</button>:<>
+      {!playback||isTerminal(playback)||!scopeMatches(playback)?<button type="button" disabled={!eligible} onClick={start}>{c.play}</button>:<>
         {state==='paused'?<button type="button" onClick={resumePlayback}>{c.resume}</button>:<button type="button" disabled={!['playing','loading'].includes(state)} onClick={pausePlayback}>{c.pause}</button>}
         <button type="button" disabled={!authenticated||ownerSerial.current!==input.serial||!seekAllowed||!['playing','paused'].includes(state)} onClick={seek}>{c.seek}</button><button type="button" onClick={close}>{c.close}</button></>}
       {recovered&&playback?.media&&playback.state!=='failed'&&!isTerminal(playback)&&input.serial===ownerSerial.current&&scopeMatches(playback)&&<button type="button" onClick={()=>attach(playback,performance.now(),ownerSerial.current)}>{c.openRecovered}</button>}
@@ -228,14 +252,14 @@ function HistoricalPlayer({input,range,rangeMatches,previewTarget,authenticated,
   </section>
 }
 
-export function RecordingWorkbench({authenticated,language,catalog,inventoryRevision}:{authenticated:boolean;language:Language;catalog:Record<string,string>;inventoryRevision:number}) {
+export function RecordingWorkbench({authenticated,language,catalog,inventoryRevision}:{authenticated:boolean|undefined;language:Language;catalog:Record<string,string>;inventoryRevision:number}) {
   const c=words[language],initial=useRef(loadStore()).current
   const [input,setInput]=useState<WindowInput>(initial.intent?.input||emptyInput)
   const [intent,setIntent]=useState<Intent|undefined>(initial.intent)
   const [jobIds,setJobIds]=useState<string[]>(initial.jobIds)
   const [jobs,setJobs]=useState<Record<string,Job>>({})
   const [jobErrors,setJobErrors]=useState<Record<string,any>>({})
-  const [devices,setDevices]=useState<Device[]>([]),[discovery,setDiscovery]=useState<Discovery>(),[deviceError,setDeviceError]=useState<any>(),[deviceLoading,setDeviceLoading]=useState(false),[deviceLoaded,setDeviceLoaded]=useState(false)
+  const [devices,setDevices]=useState<Device[]>([]),[discovery,setDiscovery]=useState<Discovery>(),[deviceError,setDeviceError]=useState<any>(),[deviceLoading,setDeviceLoading]=useState(false),[deviceLoaded,setDeviceLoaded]=useState(false),[inventorySettled,setInventorySettled]=useState(false),[inventoryCurrent,setInventoryCurrent]=useState(false)
   const [legacy,setLegacy]=useState<LegacyRecordings>(),[legacyError,setLegacyError]=useState<any>(),[eventSearching,setEventSearching]=useState(false)
   const [confirmedEvent,setConfirmedEvent]=useState('')
   const [eventPreviewId,setEventPreviewId]=useState<string>(),[eventPreparingId,setEventPreparingId]=useState<string>()
@@ -244,15 +268,16 @@ export function RecordingWorkbench({authenticated,language,catalog,inventoryRevi
   const [exportError,setExportError]=useState<any>(),[submitting,setSubmitting]=useState(false),[acknowledged,setAcknowledged]=useState(false),[notice,setNotice]=useState('')
   const [folderError,setFolderError]=useState(''),[folderNotice,setFolderNotice]=useState('')
   const [storageOk,setStorageOk]=useState(()=>saveStore(initial.intent,initial.jobIds))
-  const [playbackSerial,setPlaybackSerial]=useState<string>()
+  const [playbackSerial,setPlaybackSerial]=useState<string|undefined>(()=>{try{const saved=JSON.parse(localStorage.getItem(playbackStorageKey)||'null');return typeof saved?.input?.serial==='string'&&saved.input.serial?saved.input.serial:undefined}catch{return undefined}})
   const recoveryStarted=useRef(false)
   const jobRequests=useRef<Record<string,Promise<boolean>>>({})
   const acceptEventResults=useRef(true)
   const pendingEventFiles=useRef(new Map<string,{file:Awaited<ReturnType<typeof chooseExportFile>>;serial:string;recordId:string}>())
   const savingEventFiles=useRef(new Set<string>())
   const i18n=useMemo(()=>({t:(key:string,params:Record<string,any>={},fallback=key)=>(catalog[key]||fallback).replace(/\{(\w+)\}/g,(_:string,k:string)=>String(params[k]??''))}),[catalog])
-  const candidates=devices.filter(device=>device.recordingExport.supported||['verified','protocol_hint'].includes(device.capabilities?.eventRecordings?.status))
+  const candidates=(inventoryCurrent?devices:[]).filter(device=>device.recordingExport.supported||['verified','protocol_hint'].includes(device.capabilities?.eventRecordings?.status))
   const selected=candidates.find(device=>device.serial===input.serial)
+  const playbackSelected=playbackSerial?candidates.find(device=>device.serial===playbackSerial):selected
   const changed=Boolean(intent&&fingerprint(intent.input)!==fingerprint(input))
   const rangeMatches=Boolean(selected&&range?.request===fingerprint(input))
   const previewTarget=rangeMatches?previewTargetFor(range,input):undefined
@@ -281,9 +306,10 @@ export function RecordingWorkbench({authenticated,language,catalog,inventoryRevi
   const update=(field:keyof WindowInput,value:string)=>{setInput(current=>({...current,[field]:value}));setAcknowledged(false);setNotice('');setEventPreviewId(undefined);setEventPreparingId(undefined);setEventPreviewFailure(undefined);setFolderError('');setFolderNotice('')}
   const recoverPlaybackSerial=(serial:string)=>{setInput(current=>current.serial===serial?current:{...current,serial});setPlaybackSerial(serial)}
   const remember=(next:Intent|undefined,ids:string[])=>{setIntent(next);setJobIds(ids);if(!saveStore(next,ids))setStorageOk(false)}
-  const fetchDevices=async()=>{setDevices([]);setDeviceLoaded(false);setRange(undefined);setRangeError(undefined)
-    if(!authenticated){setDiscovery(undefined);setDeviceError(undefined);return}setDeviceLoading(true);setDeviceError(undefined)
-    try{const value=await api.devices();setDevices(value.devices);setDiscovery(value.discovery);setDeviceLoaded(true)}catch(error){setDeviceError(fault(error));setDiscovery((error as any)?.body?.discovery)}finally{setDeviceLoading(false)}}
+  const fetchDevices=async()=>{setRange(undefined);setRangeError(undefined)
+    if(authenticated===undefined)return
+    if(!authenticated){setDevices([]);setDeviceLoaded(false);setInventoryCurrent(false);setInventorySettled(true);setDiscovery(undefined);setDeviceError(undefined);return}setDeviceLoading(true);setDeviceError(undefined)
+    try{const value=await api.devices();setDevices(value.devices);setDiscovery(value.discovery);setDeviceLoaded(true);setInventoryCurrent(true);setInventorySettled(true)}catch(error){setDeviceError(fault(error));setDiscovery((error as any)?.body?.discovery);setInventoryCurrent(false);setInventorySettled(true)}finally{setDeviceLoading(false)}}
   const receiveLegacy=(value:LegacyRecordings)=>{setLegacy(value)
     if(acceptEventResults.current&&!value.busy&&value.messageI18n?.key==='service.recordings.found'&&value.query)setConfirmedEvent(eventFingerprint(value.query.serial,value.query.window.input))}
   const fetchLegacy=async()=>{try{const value=await api.recordings();receiveLegacy(value);setLegacyError(undefined);if(!intent&&input.timezone==='America/Toronto'&&value.timezone!==input.timezone)setInput(current=>({...current,timezone:value.timezone}))}catch(error){setLegacyError(fault(error))}}
@@ -343,7 +369,7 @@ export function RecordingWorkbench({authenticated,language,catalog,inventoryRevi
     try{const file=await chooseExportFile(eventOutputName(clip));if(!file)return;await saveArtifactToFile(file,clip.url);setFolderNotice(c.savedToFolder)}
     catch(error){setFolderError(showError(fault(error))||c.folderSaveFailed)}
   },[c])
-  const findRanges=async()=>{setRangeLoading(true);setRange(undefined);setRangeError(undefined);try{const value=await api.ranges(input);setRange({...value,request:fingerprint(input)})}catch(error){setRangeError(fault(error))}finally{setRangeLoading(false)}}
+  const findRanges=async()=>{if(!inventoryCurrent)return;setRangeLoading(true);setRange(undefined);setRangeError(undefined);try{const value=await api.ranges(input);setRange({...value,request:fingerprint(input)})}catch(error){setRangeError(fault(error))}finally{setRangeLoading(false)}}
   const submitExport=async()=>{
     setNotice('');setFolderNotice('');setFolderError('')
     if(!storageOk)return setExportError({code:'STORAGE_REQUIRED'})
@@ -392,12 +418,12 @@ export function RecordingWorkbench({authenticated,language,catalog,inventoryRevi
         </>:<p>{c.noEvents}</p>)}
       </section>
       <section className="card result-section" role="region" aria-label={c.continuous}><h3>{c.continuous}</h3>
-        <button type="button" disabled={!authenticated||!selected||rangeLoading} onClick={findRanges}>{rangeLoading?c.working:c.check}</button>
+        <button type="button" disabled={!authenticated||!inventoryCurrent||!selected||rangeLoading} onClick={findRanges}>{rangeLoading?c.working:c.check}</button>
         {rangeError&&<div role="status" className="error">{showError(rangeError)} <button type="button" onClick={findRanges}>{c.retry}</button></div>}
         {rangeMatches&&<><Timeline value={range} i18n={i18n} label={selected?.name||input.serial}/><p>{range.ranges.length?c.available:c.noContinuous}</p>
           <p className="normalized">{c.previewSample}: {previewTarget?`${previewTarget.input.day} · ${previewTarget.input.start}–${previewTarget.input.end}`:c.playbackNoSample}</p></>}
         <div className="continuous-preview-grid">
-          <HistoricalPlayer input={previewTarget?.input||input} range={range} rangeMatches={rangeMatches} previewTarget={previewTarget} authenticated={authenticated} c={c} showError={showError} onSerialLock={setPlaybackSerial} onRecoverSerial={recoverPlaybackSerial}/>
+          <HistoricalPlayer input={previewTarget?.input||input} range={range} rangeMatches={rangeMatches} previewTarget={previewTarget} authenticated={Boolean(authenticated)} inventorySettled={inventorySettled} inventoryCurrent={inventoryCurrent} verificationStatus={playbackSelected?.capabilities?.continuousPlaybackControls?.status||'unknown'} verificationScope={playbackSelected?.verificationScope} c={c} showError={showError} onSerialLock={setPlaybackSerial} onRecoverSerial={recoverPlaybackSerial}/>
           {rangeMatches&&<aside className="continuous-export-pane"><h4>{c.exportContinuous}</h4><p>{c.exportHint}</p><button type="button" disabled={submitting||!range?.ranges?.length} onClick={submitExport}>{submitting?c.working:c.exportContinuous}</button></aside>}
         </div>
         {changed&&rangeMatches&&<label className="acknowledge"><input type="checkbox" checked={acknowledged} onChange={event=>setAcknowledged(event.target.checked)}/>{c.acknowledge}</label>}

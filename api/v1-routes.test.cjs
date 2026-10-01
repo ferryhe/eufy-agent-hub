@@ -47,9 +47,9 @@ function media({ short = false, fail = false } = {}) {
     fs.writeFileSync(path.join(directory, `${stage}.stdout.log`), stage === 'decode' ? `frame=${short ? 20 : 1200}\nprogress=end\n` : '');
     fs.writeFileSync(path.join(directory, `${stage}.stderr.log`), '');
     if (fail) throw new Error('Runtime is unavailable');
-    if (stage === 'mux') fs.writeFileSync(path.join(args[1], 'timed.ts'), 'ts');
+    if (stage === 'mux') fs.writeFileSync(path.join(args.at(-2), 'timed.ts'), 'ts');
     if (stage === 'convert') fs.writeFileSync(args.at(-1), 'fixture-mp4');
-    if (stage === 'timeline') fs.writeFileSync(path.join(args[1], 'media-timeline.json'), JSON.stringify({ muxStartMs: 0,
+    if (stage === 'timeline') fs.writeFileSync(path.join(args.at(-1), 'media-timeline.json'), JSON.stringify({ muxStartMs: 0,
       streams: { video: { count: short ? 20 : 1200, firstTimestampMs: 0, lastTimestampMs: short ? 950 : 59950, lastDurationMs: 50 } } }));
   };
 }
