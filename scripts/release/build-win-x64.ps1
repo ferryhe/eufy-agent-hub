@@ -109,8 +109,16 @@ $ffmpegRoot = Get-ChildItem (Join-Path $scratch 'ffmpeg') -Directory | Select-Ob
 New-Item -ItemType Directory -Path (Join-Path $stage 'runtime\ffmpeg') -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $ffmpegRoot.FullName 'bin\ffmpeg.exe'),(Join-Path $ffmpegRoot.FullName 'LICENSE'),(Join-Path $ffmpegRoot.FullName 'README.txt') -Destination (Join-Path $stage 'runtime\ffmpeg')
 
-$ffmpegVersion = & (Join-Path $stage 'runtime\ffmpeg\ffmpeg.exe') -version 2>&1 | Out-String
-$ffmpegLicense = & (Join-Path $stage 'runtime\ffmpeg\ffmpeg.exe') -L 2>&1 | Out-String
+$previousErrorActionPreference = $ErrorActionPreference
+try {
+  # FFmpeg writes its banner to stderr even on success. Windows PowerShell turns
+  # redirected native stderr into error records, so capture it without Stop.
+  $ErrorActionPreference = 'Continue'
+  $ffmpegVersion = & (Join-Path $stage 'runtime\ffmpeg\ffmpeg.exe') -version 2>&1 | Out-String
+  if ($LASTEXITCODE -ne 0) { throw "Bundled FFmpeg version probe failed with exit code $LASTEXITCODE." }
+  $ffmpegLicense = & (Join-Path $stage 'runtime\ffmpeg\ffmpeg.exe') -L 2>&1 | Out-String
+  if ($LASTEXITCODE -ne 0) { throw "Bundled FFmpeg license probe failed with exit code $LASTEXITCODE." }
+} finally { $ErrorActionPreference = $previousErrorActionPreference }
 $pythonInfo = & (Join-Path $stage 'runtime\python\python.exe') -B -c "import av,json;print(json.dumps({'version':av.__version__,'libraries':av.library_versions},sort_keys=True))"
 if ($LASTEXITCODE -ne 0) { throw "Bundled Python/PyAV probe failed with exit code $LASTEXITCODE." }
 $npmComponents = Get-ChildItem -LiteralPath $stage -Filter package.json -Recurse -File | Where-Object { $_.FullName -match '[\\/]node_modules[\\/]' } | ForEach-Object {
