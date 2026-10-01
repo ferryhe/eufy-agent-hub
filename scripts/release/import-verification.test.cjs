@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 const moduleRoot = process.env.EUFY_PACKAGE_ROOT || path.resolve(__dirname, '../..');
 const { importVerification } = require(path.join(moduleRoot, 'scripts/release/import-verification.cjs'));
 const { DeviceVerificationRepository } = require(path.join(moduleRoot, 'capabilities/devices/verification-store.cjs'));
@@ -56,4 +57,44 @@ test('reordered JSON keys preserve semantic identity and cannot bypass conflict 
   assert.throws(() => importVerification(source, destination), /nothing was imported/);
   assert.equal(fs.readFileSync(destination, 'utf8'), before);
   assert.equal(JSON.parse(before).records[0].reason, 'fixture');
+});
+
+test('a concurrent importer is rejected before it can replace the verification store', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'eufy-import-lock-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const destination = path.join(root, 'EufyAgentHub', 'devices', 'verification.json');
+  const firstSource = path.join(root, 'first.json'), secondSource = path.join(root, 'second.json');
+  const ready = path.join(root, 'first-ready');
+  fs.writeFileSync(firstSource, JSON.stringify({ version: 1, records: [record('first')], reachability: [] }));
+  fs.writeFileSync(secondSource, JSON.stringify({ version: 1, records: [record('second')], reachability: [] }));
+  const importer = path.join(moduleRoot, 'scripts/release/import-verification.cjs');
+  const fixture = `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const original = fs.renameSync;
+    fs.renameSync = (from, to) => {
+      if (path.resolve(to) === path.resolve(${JSON.stringify(destination)})) {
+        fs.writeFileSync(${JSON.stringify(ready)}, 'ready');
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
+      }
+      return original(from, to);
+    };
+    require(${JSON.stringify(importer)}).importVerification(${JSON.stringify(firstSource)}, ${JSON.stringify(destination)});
+  `;
+  const first = spawn(process.execPath, ['-e', fixture], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let firstError = ''; first.stderr.on('data', chunk => { firstError += chunk; });
+  const firstDone = new Promise(resolve => first.once('close', resolve));
+  for (let attempt = 0; !fs.existsSync(ready) && attempt < 200; attempt++)
+    await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(fs.existsSync(ready), true, `first importer did not reach replacement: ${firstError}`);
+
+  const second = spawn(process.execPath, [importer, secondSource], {
+    env: { ...process.env, LOCALAPPDATA: root }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let secondError = ''; second.stderr.on('data', chunk => { secondError += chunk; });
+  const secondCode = await new Promise(resolve => second.once('close', resolve));
+  assert.notEqual(secondCode, 0);
+  assert.match(secondError, /verification store is busy/i);
+  assert.equal(await firstDone, 0, firstError);
+  assert.deepEqual(new DeviceVerificationRepository(destination).read().records.map(item => item.scope.serial), ['first']);
 });

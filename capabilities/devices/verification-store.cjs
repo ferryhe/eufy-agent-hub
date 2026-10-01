@@ -16,6 +16,25 @@ function validateSnapshot(snapshot) {
   }
 }
 
+function withVerificationLock(filename, action) {
+  const lock = `${path.resolve(filename)}.lock`;
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  let handle;
+  try {
+    handle = fs.openSync(lock, 'wx', 0o600);
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    const busy = new Error(`Device verification store is busy: ${path.resolve(filename)}`);
+    busy.code = 'VERIFICATION_STORE_BUSY';
+    throw busy;
+  }
+  try { return action(); }
+  finally {
+    fs.closeSync(handle);
+    fs.rmSync(lock, { force: true });
+  }
+}
+
 // One resident owner; synchronous read/modify/replace also lets its local writers reopen the same file.
 class DeviceVerificationRepository {
   constructor(filename = DEFAULT_RECORDS_PATH) {
@@ -36,15 +55,19 @@ class DeviceVerificationRepository {
   }
 
   record(observation) {
-    const snapshot = this.read();
-    snapshot.records = recordCapability(snapshot.records, observation);
-    return this.#save(snapshot);
+    return withVerificationLock(this.path, () => {
+      const snapshot = this.read();
+      snapshot.records = recordCapability(snapshot.records, observation);
+      return this.#save(snapshot);
+    });
   }
 
   observeReachability(observation) {
-    const snapshot = this.read();
-    snapshot.reachability = [...snapshot.reachability.filter(item => item.serial !== observation.serial), structuredClone(observation)];
-    return this.#save(snapshot);
+    return withVerificationLock(this.path, () => {
+      const snapshot = this.read();
+      snapshot.reachability = [...snapshot.reachability.filter(item => item.serial !== observation.serial), structuredClone(observation)];
+      return this.#save(snapshot);
+    });
   }
 
   #save(snapshot) {
@@ -61,4 +84,4 @@ class DeviceVerificationRepository {
   }
 }
 
-module.exports = { DeviceVerificationRepository, DEFAULT_RECORDS_PATH };
+module.exports = { DeviceVerificationRepository, DEFAULT_RECORDS_PATH, withVerificationLock };

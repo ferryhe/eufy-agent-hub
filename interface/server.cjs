@@ -35,7 +35,7 @@ function createServer(options = {}) {
   const session = options.session || new LocalEufySession(undefined, {
     sessionPath: options.sessionPath ?? process.env.EUFY_SESSION_PATH ?? data?.session ?? path.resolve(__dirname, '../output/auth/session.json'),
   });
-  let busy = false;
+  let busy = false, stopping = false, activeAuth;
   const getOrigin = () => `http://127.0.0.1:${server.address()?.port ?? port}`;
   const server = http.createServer(async (req, res) => {
     const origin = getOrigin();
@@ -48,7 +48,8 @@ function createServer(options = {}) {
     };
     const reject = (status, message, key) => send(status, versioned
       ? { error: { code: status === 409 ? 'SERVICE_BUSY' : status === 403 ? 'LOCAL_ORIGIN_REQUIRED'
-        : status === 401 ? 'UNAUTHENTICATED' : status === 413 ? 'INPUT_TOO_LONG' : 'INVALID_REQUEST', message } }
+        : status === 401 ? 'UNAUTHENTICATED' : status === 413 ? 'INPUT_TOO_LONG'
+          : status === 503 ? 'SERVICE_STOPPING' : 'INVALID_REQUEST', message } }
       : errorBody(serviceError(message, key)));
     if (req.headers.host !== new URL(origin).host) return reject(403, '请使用本地链接。', 'ui.error.localLink');
     if (serveApp(req, res, pathname)) return;
@@ -67,6 +68,7 @@ function createServer(options = {}) {
       return send(200, { ...session.state, authenticated, busy, version: 'mega-inventory-1' });
     }
     if (req.method !== 'POST' || !['/login', '/verify', '/refresh', '/logout'].includes(route)) return send(404, {});
+    if (stopping) return reject(503, '服务正在停止。', 'ui.error.busy');
     if ((req.headers.origin !== origin && (!versioned || req.headers.origin)) || !req.headers['content-type']?.startsWith('application/json')) {
       return reject(403, '请从本地登录页面提交。', 'ui.error.localPage');
     }
@@ -79,7 +81,8 @@ function createServer(options = {}) {
         body += chunk;
         if (body.length > 16384) return reject(413, '输入过长。', 'ui.error.inputLong');
       }
-      // Another request may acquire the session while this body is arriving.
+      // Shutdown or another request may acquire the session while this body is arriving.
+      if (stopping) return reject(503, '服务正在停止。', 'ui.error.busy');
       if (authBusy()) return reject(409, '正在连接，请稍候。', 'ui.error.busy');
       data = JSON.parse(body);
       if (versioned) validateRequest(route === '/login' ? 'login' : route === '/verify' ? 'verification' : 'empty', data);
@@ -98,29 +101,34 @@ function createServer(options = {}) {
     }
     busy = true;
     if (route !== '/logout') send(202, { ok: true });
-    try {
-      if (route === '/login') {
-        recordingRoutes.recordings.close();
-        recordingRoutes.state.records = []; recordingRoutes.state.query = null;
-        await session.login(data);
+    const operation = Promise.resolve().then(async () => {
+      try {
+        if (route === '/login') {
+          recordingRoutes.recordings.close();
+          recordingRoutes.state.records = []; recordingRoutes.state.query = null;
+          await session.login(data);
+        }
+        else if (route === '/logout') {
+          await v1.loggedOut();
+          session.logout();
+          recordingRoutes.recordings.close();
+          recordingRoutes.state.records = []; recordingRoutes.state.query = null;
+          send(202, { ok: true });
+        }
+        else if (route === '/refresh') await session.refresh();
+        else await session.verify(data.code.trim());
+      } catch (error) {
+        if (route === '/logout') send(error.status || 503, versioned
+          ? { error: { code: error.code || 'CONTROL_CLEANUP_FAILED', message: error.code || 'CONTROL_CLEANUP_FAILED' } }
+          : errorBody(serviceError('Playback cleanup failed.', 'ui.error.busy')));
+        else session.fail(error);
+      } finally {
+        busy = false;
       }
-      else if (route === '/logout') {
-        await v1.loggedOut();
-        session.logout();
-        recordingRoutes.recordings.close();
-        recordingRoutes.state.records = []; recordingRoutes.state.query = null;
-        send(202, { ok: true });
-      }
-      else if (route === '/refresh') await session.refresh();
-      else await session.verify(data.code.trim());
-    } catch (error) {
-      if (route === '/logout') send(error.status || 503, versioned
-        ? { error: { code: error.code || 'CONTROL_CLEANUP_FAILED', message: error.code || 'CONTROL_CLEANUP_FAILED' } }
-        : errorBody(serviceError('Playback cleanup failed.', 'ui.error.busy')));
-      else session.fail(error);
-    } finally {
-      busy = false;
-    }
+    });
+    activeAuth = operation;
+    try { await operation; }
+    finally { if (activeAuth === operation) activeAuth = null; }
   });
   const recordingRoutes = installRecordingRoutes(server, session, {
     isBusy: () => busy || v1.isBusy(), getOrigin, recordings: options.recordings, outputRoot: options.outputRoot ?? data?.events,
@@ -137,13 +145,17 @@ function createServer(options = {}) {
   const isBusy = () => busy || recordingRoutes.state.busy || v1.isBusy();
   const agentRoutes = installAgentRoutes(server, { getOrigin, ...(data ? { statePath: data.agent } : {}), ...options.agent });
   let shutdown;
-  server.shutdown = () => shutdown ||= (async () => {
-    const settled = await Promise.allSettled([agentRoutes.shutdown(), v1.shutdown(), recordingRoutes.shutdown()]);
-    try { await recordingRoutes.recordings.close(); } catch (error) { settled.push({ status: 'rejected', reason: error }); }
-    try { await session.close?.(); } catch (error) { settled.push({ status: 'rejected', reason: error }); }
-    const errors = settled.filter(item => item.status === 'rejected').map(item => item.reason);
-    if (errors.length) throw new AggregateError(errors, 'Resident cleanup failed');
-  })();
+  server.shutdown = () => {
+    stopping = true;
+    return shutdown ||= (async () => {
+      const settled = await Promise.allSettled(activeAuth ? [activeAuth] : []);
+      settled.push(...await Promise.allSettled([agentRoutes.shutdown(), v1.shutdown(), recordingRoutes.shutdown()]));
+      try { await recordingRoutes.recordings.close(); } catch (error) { settled.push({ status: 'rejected', reason: error }); }
+      try { await session.close?.(); } catch (error) { settled.push({ status: 'rejected', reason: error }); }
+      const errors = settled.filter(item => item.status === 'rejected').map(item => item.reason);
+      if (errors.length) throw new AggregateError(errors, 'Resident cleanup failed');
+    })();
+  };
   server.once('close', () => { server.shutdown().catch(error => console.error(error)); });
   server.start = callback => {
     server.ready = Promise.resolve(session.restore?.()).then(() => server.listen(port, '127.0.0.1', callback));

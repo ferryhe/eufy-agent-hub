@@ -67,6 +67,7 @@ function requestControl(name, token, command, timeout = 5000) {
   });
 }
 function tokenPath(dataRoot) { return path.join(dataRoot, 'control', 'token'); }
+function residentLogPath(dataRoot) { return path.join(dataRoot, 'logs', 'resident.log'); }
 function readToken(dataRoot) { return fs.readFileSync(tokenPath(dataRoot), 'utf8').trim(); }
 async function currentStatus(dataRoot) {
   try { return await requestControl(controlName(dataRoot), readToken(dataRoot), 'status'); }
@@ -75,6 +76,35 @@ async function currentStatus(dataRoot) {
 function openBrowser() {
   if (process.env.EUFY_NO_BROWSER === '1') return;
   spawn('explorer.exe', [`http://127.0.0.1:${PORT}/app/`], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+}
+async function spawnResident(dataRoot, options = {}) {
+  const logFile = residentLogPath(dataRoot);
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+  fs.appendFileSync(logFile, `\n[${new Date().toISOString()}] Starting resident.\n`);
+  const output = fs.openSync(logFile, 'a');
+  let child;
+  try {
+    child = spawn(options.executable || process.execPath, options.args || [__filename, 'resident'], {
+      detached: options.detached ?? true, stdio: ['ignore', output, output], windowsHide: true,
+      env: { ...process.env, ...options.env, EUFY_DATA_ROOT: dataRoot },
+    });
+  } catch (error) {
+    fs.appendFileSync(logFile, `[${new Date().toISOString()}] Resident spawn failed: ${error.message}\n`);
+    throw new Error(`Resident spawn failed: ${error.message}. See ${logFile}.`, { cause: error });
+  } finally { fs.closeSync(output); }
+  return new Promise((resolve, reject) => {
+    const failed = error => {
+      fs.appendFileSync(logFile, `[${new Date().toISOString()}] Resident spawn failed: ${error.message}\n`);
+      reject(new Error(`Resident spawn failed: ${error.message}. See ${logFile}.`, { cause: error }));
+    };
+    child.once('error', failed);
+    child.once('spawn', () => {
+      child.off('error', failed);
+      child.on('error', error => fs.appendFileSync(logFile, `[${new Date().toISOString()}] Resident error: ${error.message}\n`));
+      child.unref();
+      resolve({ child, logFile });
+    });
+  });
 }
 function configureRuntime() {
   const required = {
@@ -131,17 +161,20 @@ async function resident(dataRoot = defaultDataRoot()) {
   } finally { fs.rmSync(tokenPath(dataRoot), { force: true }); }
 }
 async function start(dataRoot = defaultDataRoot()) {
+  const logFile = residentLogPath(dataRoot);
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+  fs.closeSync(fs.openSync(logFile, 'a'));
   const existing = await currentStatus(dataRoot);
   if (existing?.state === 'ready') { openBrowser(); return existing; }
-  if (existing && existing.state !== 'starting') throw new Error(existing.error || `Resident is ${existing.state}.`);
-  if (!existing) spawn(process.execPath, [__filename, 'resident'], { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, EUFY_DATA_ROOT: dataRoot } }).unref();
+  if (existing && existing.state !== 'starting') throw new Error(`${existing.error || `Resident is ${existing.state}.`} See ${logFile}.`);
+  if (!existing) await spawnResident(dataRoot);
   for (let attempt = 0; attempt < 200; attempt++) {
     await delay(100);
     const status = await currentStatus(dataRoot);
     if (status?.state === 'ready') { openBrowser(); return status; }
-    if (status?.state === 'failed') throw new Error(status.error);
+    if (status?.state === 'failed') throw new Error(`${status.error}. See ${logFile}.`);
   }
-  throw new Error(`Resident did not start. Check ${path.join(dataRoot, 'logs')}.`);
+  throw new Error(`Resident did not start. See ${logFile}.`);
 }
 async function stop(dataRoot = defaultDataRoot()) {
   const status = await currentStatus(dataRoot);
@@ -156,4 +189,4 @@ if (require.main === module) {
   operation.then(result => { if (command !== 'resident') console.log(result.state); }, error => { console.error(error.message); process.exitCode = 1; });
 }
 
-module.exports = { controlName, listenControl, requestControl, configureRuntime, resident, start, stop };
+module.exports = { controlName, listenControl, requestControl, residentLogPath, spawnResident, configureRuntime, resident, start, stop };

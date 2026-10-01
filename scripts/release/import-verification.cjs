@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
-const { DeviceVerificationRepository } = require('../../capabilities/devices/verification-store.cjs');
+const { DeviceVerificationRepository, withVerificationLock } = require('../../capabilities/devices/verification-store.cjs');
 const { scopeKey } = require('../../capabilities/devices/capabilities.cjs');
 
 function importVerification(source, destination) {
@@ -10,31 +10,31 @@ function importVerification(source, destination) {
   destination = path.resolve(destination);
   if (source === destination) throw new Error('Source and destination must be different files.');
   const incoming = new DeviceVerificationRepository(source).read();
-  const repository = new DeviceVerificationRepository(destination);
-  const current = repository.read();
   const key = record => JSON.stringify([scopeKey(record.scope), record.capability]);
-  const existing = new Map(current.records.map(record => [key(record), record]));
-  let imported = 0, skipped = 0;
-  for (const record of incoming.records) {
-    const previous = existing.get(key(record));
-    if (previous) {
-      if (!isDeepStrictEqual(previous, record))
-        throw new Error(`Existing verification differs for ${record.scope.serial}/${record.capability}; nothing was imported.`);
-      skipped++; continue;
+  return withVerificationLock(destination, () => {
+    const repository = new DeviceVerificationRepository(destination);
+    const current = repository.read();
+    const existing = new Map(current.records.map(record => [key(record), record]));
+    let imported = 0, skipped = 0;
+    for (const record of incoming.records) {
+      const previous = existing.get(key(record));
+      if (previous) {
+        if (!isDeepStrictEqual(previous, record))
+          throw new Error(`Existing verification differs for ${record.scope.serial}/${record.capability}; nothing was imported.`);
+        skipped++; continue;
+      }
+      existing.set(key(record), record); imported++;
     }
-    existing.set(key(record), record); imported++;
-  }
-  if (imported) {
-    fs.mkdirSync(path.dirname(destination), { recursive: true });
-    const temporary = `${destination}.${randomUUID()}.tmp`;
-    try {
-      fs.writeFileSync(temporary, JSON.stringify(current));
-      const staged = new DeviceVerificationRepository(temporary);
-      for (const record of incoming.records) if (!current.records.some(item => key(item) === key(record))) staged.record(record);
-      fs.renameSync(temporary, destination);
-    } finally { fs.rmSync(temporary, { force: true }); }
-  }
-  return { imported, skipped };
+    if (imported) {
+      const temporary = `${destination}.${randomUUID()}.tmp`;
+      try {
+        fs.writeFileSync(temporary, JSON.stringify({ ...current, records: [...existing.values()] }));
+        new DeviceVerificationRepository(temporary).read();
+        fs.renameSync(temporary, destination);
+      } finally { fs.rmSync(temporary, { force: true }); }
+    }
+    return { imported, skipped };
+  });
 }
 
 if (require.main === module) {

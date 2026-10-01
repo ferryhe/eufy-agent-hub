@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { createServer, resolveDataPaths } = require('./server.cjs');
@@ -146,4 +147,77 @@ test('one data root owns every durable resident path', () => {
     verification: path.join(root, 'devices', 'verification.json'),
     agent: path.join(root, 'agent', 'interface.json'),
   });
+});
+
+test('shutdown waits for accepted authentication before closing the session', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'eufy-auth-drain-'));
+  const order = [];
+  let beginLogin, finishLogin;
+  const started = new Promise(resolve => { beginLogin = resolve; });
+  const release = new Promise(resolve => { finishLogin = resolve; });
+  const session = {
+    authenticated: false, state: { phase: 'idle', devices: [], diagnostics: [] },
+    async login() { order.push('login-start'); beginLogin(); await release; order.push('login-finish'); },
+    fail: error => assert.fail(error),
+    close() { order.push('session-close'); },
+  };
+  const server = createServer({ port: 0, session, recordings: { close() {} }, outputRoot: root });
+  t.after(async () => {
+    if (server.listening) await new Promise(resolve => server.close(resolve));
+    await server.shutdown();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  await new Promise(resolve => server.start(resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const response = await fetch(origin + '/login', {
+    method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'fixture@example.test', password: 'fixture', country: 'CA' }),
+  });
+  assert.equal(response.status, 202);
+  await started;
+  let drained = false;
+  const cleanup = server.shutdown().then(() => { drained = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(drained, false);
+  assert.deepEqual(order, ['login-start']);
+  finishLogin();
+  await cleanup;
+  assert.deepEqual(order, ['login-start', 'login-finish', 'session-close']);
+});
+
+test('authentication cannot start after shutdown begins during request body upload', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'eufy-auth-stop-body-'));
+  let logins = 0;
+  const session = {
+    authenticated: false, state: { phase: 'idle', devices: [], diagnostics: [] },
+    login() { logins++; }, fail: error => assert.fail(error), close() {},
+  };
+  const server = createServer({ port: 0, session, recordings: { close() {} }, outputRoot: root });
+  t.after(async () => {
+    if (server.listening) await new Promise(resolve => server.close(resolve));
+    await server.shutdown();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  await new Promise(resolve => server.start(resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const body = Buffer.from(JSON.stringify({ email: 'fixture@example.test', password: 'fixture', country: 'CA' }));
+  let request;
+  const result = new Promise((resolve, reject) => {
+    request = http.request(origin + '/login', {
+      method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'Content-Length': body.length },
+    }, response => {
+      let source = '';
+      response.setEncoding('utf8'); response.on('data', chunk => { source += chunk; });
+      response.on('end', () => resolve({ status: response.statusCode, body: JSON.parse(source) }));
+    });
+    request.on('error', reject);
+  });
+  request.write(body.subarray(0, body.length - 1));
+  await new Promise(resolve => setTimeout(resolve, 25));
+  await server.shutdown();
+  request.end(body.subarray(body.length - 1));
+  const response = await result;
+  assert.equal(response.status, 503);
+  assert.equal(response.body.error, '服务正在停止。');
+  assert.equal(logins, 0);
 });
