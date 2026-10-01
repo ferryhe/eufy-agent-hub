@@ -174,7 +174,7 @@ function HistoricalPlayer({input,range,rangeMatches,previewTarget,authenticated,
   const scopeChanged={code:'CONTROL_SCOPE_CHANGED',message:'CONTROL_SCOPE_CHANGED'}
   const revoke=async(value=current.current,sessionId=value?.sessionId,failure?:any,intent?:any)=>{const requestIdentity=intent?.requestId&&intent?.residentEpoch?{requestId:intent.requestId,residentEpoch:intent.residentEpoch}:undefined;identityGeneration.current++;streamGeneration.current++;stream.current?.abort();stream.current=undefined;terminal.current=true;current.current=undefined;setPlayback(undefined);setRecovered(false);clearSurface();clearRemembered();ownerSerial.current=undefined;onSerialLock(undefined);setState(failure?'error':'idle');setError(failure)
     if(requestIdentity){const deadline=Date.now()+playbackStartTimeoutMs;let pendingCloseAttempted=false
-      while(Date.now()<deadline){let request;try{request=(await api.playbackRequest(requestIdentity.requestId,requestIdentity.residentEpoch)).request}catch(reason){const code=fault(reason).code;if(!['PLAYBACK_REQUEST_NOT_FOUND','PLAYBACK_REQUEST_EXPIRED'].includes(code)&&!failure)setError(fault(reason));return}
+      while(Date.now()<deadline){let request;try{request=(await api.playbackRequest(requestIdentity.requestId,requestIdentity.residentEpoch)).request}catch(reason){const requestFailure=fault(reason);if(!failure){setError(requestFailure);setState('error')}return}
         if(request.cleanupComplete)return;sessionId=request.sessionId||sessionId
         if(request.state==='pending'&&(!sessionId||pendingCloseAttempted)){await new Promise(resolve=>setTimeout(resolve,250));continue}
         if(request.state==='pending')pendingCloseAttempted=true
@@ -275,7 +275,7 @@ export function RecordingWorkbench({authenticated,language,catalog,inventoryRevi
   const pendingEventFiles=useRef(new Map<string,{file:Awaited<ReturnType<typeof chooseExportFile>>;serial:string;recordId:string}>())
   const savingEventFiles=useRef(new Set<string>())
   const i18n=useMemo(()=>({t:(key:string,params:Record<string,any>={},fallback=key)=>(catalog[key]||fallback).replace(/\{(\w+)\}/g,(_:string,k:string)=>String(params[k]??''))}),[catalog])
-  const candidates=devices.filter(device=>device.recordingExport.supported||['verified','protocol_hint'].includes(device.capabilities?.eventRecordings?.status))
+  const candidates=(inventoryCurrent?devices:[]).filter(device=>device.recordingExport.supported||['verified','protocol_hint'].includes(device.capabilities?.eventRecordings?.status))
   const selected=candidates.find(device=>device.serial===input.serial)
   const playbackSelected=playbackSerial?candidates.find(device=>device.serial===playbackSerial):selected
   const changed=Boolean(intent&&fingerprint(intent.input)!==fingerprint(input))
