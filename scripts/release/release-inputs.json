@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "target": "win-x64",
+  "components": {
+    "node": {
+      "version": "24.14.1",
+      "url": "https://nodejs.org/download/release/v24.14.1/node-v24.14.1-win-x64.zip",
+      "sha256": "6e50ce5498c0cebc20fd39ab3ff5df836ed2f8a31aa093cecad8497cff126d70",
+      "license": "MIT",
+      "source": { "url": "https://nodejs.org/download/release/v24.14.1/node-v24.14.1.tar.xz", "sha256": "7822507713f202cf2a551899d250259643f477b671706db421a6fb55c4aa0991" }
+    },
+    "python": {
+      "version": "3.13.11",
+      "url": "https://www.python.org/ftp/python/3.13.11/python-3.13.11-embed-amd64.zip",
+      "sha256": "1ec066fb61ba5e8c73e29e048cd07c26850f74585e3a116005135b31b8004890",
+      "license": "PSF-2.0",
+      "source": { "url": "https://www.python.org/ftp/python/3.13.11/Python-3.13.11.tar.xz", "sha256": "16ede7bb7cdbfa895d11b0642fa0e523f291e6487194d53cf6d3b338c3a17ea2" }
+    },
+    "pyav": {
+      "version": "18.1.0",
+      "filename": "av-18.1.0-cp311-abi3-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/33/b4/76ba21e46704f632004276b85289a1582e95f5eff760436d6149875a1881/av-18.1.0-cp311-abi3-win_amd64.whl",
+      "sha256": "ea1480b7a8d5405cb5f382b344731bf125fd2c1c6fae3964f6c48595628387ff",
+      "license": "BSD-3-Clause",
+      "source": { "url": "https://files.pythonhosted.org/packages/8d/f4/f22114d30d3435e38c6af2b4870f37b864403dca6ae7af747a289ce0a18e/av-18.1.0.tar.gz", "sha256": "47bfc286e1bc9de7ab4681fc2b575cd2460a66919d31ffe1bd5aa54fae531a28" }
+    },
+    "ffmpeg": {
+      "version": "9.0.2-essentials_build-www.gyan.dev",
+      "url": "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.2-essentials_build.zip",
+      "sha256": "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba",
+      "license": "GPL-3.0-or-later",
+      "source": { "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz", "sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e" },
+      "configurationRequired": ["--enable-gpl", "--enable-version3", "--enable-static", "--enable-libx264"]
+    }
+  },
+  "publicationGate": {
+    "status": "BLOCKED",
+    "reason": "The redistributor has not yet mapped every library in the Gyan static FFmpeg binary, including the exact libx264 revision, to complete corresponding source and build materials. The PyAV wheel's bundled libraries also require final source mapping. This locally generated ZIP is for private evaluation only and must not be published."
+  }
+}

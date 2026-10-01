@@ -32,9 +32,9 @@ async function fixture(options = {}) {
         fs.writeFileSync(path.join(jobDirectory, `${stage}.stdout.log`), stage === 'decode' ? `frame=${options.partial ? 20 : 1200}\nprogress=end\n` : '');
         fs.writeFileSync(path.join(jobDirectory, `${stage}.stderr.log`), '');
         if (options.failed) throw new Error('Synthetic conversion failure');
-        if (stage === 'mux') fs.writeFileSync(path.join(args[1], 'timed.ts'), 'ts');
+        if (stage === 'mux') fs.writeFileSync(path.join(args.at(-2), 'timed.ts'), 'ts');
         if (stage === 'convert') fs.writeFileSync(args.at(-1), 'synthetic-media-bytes');
-        if (stage === 'timeline') fs.writeFileSync(path.join(args[1], 'media-timeline.json'), JSON.stringify({ muxStartMs: 0,
+        if (stage === 'timeline') fs.writeFileSync(path.join(args.at(-1), 'media-timeline.json'), JSON.stringify({ muxStartMs: 0,
           streams: { video: { count: options.partial ? 20 : 1200, firstTimestampMs: 0, lastTimestampMs: options.partial ? 950 : 59950, lastDurationMs: 50 } } }));
       },
       createCapture: () => ({ close() {}, captureRange: async (_serial, _begin, _end, destination) => {

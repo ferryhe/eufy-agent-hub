@@ -30,9 +30,9 @@ function media(mode) {
     fs.writeFileSync(path.join(directory, `${stage}.stdout.log`), stage === 'decode' ? `frame=${mode === 'partial' ? 20 : 1200}\nprogress=end\n` : '');
     fs.writeFileSync(path.join(directory, `${stage}.stderr.log`), '');
     if (mode === 'failed') throw new Error('Synthetic conversion failure');
-    if (stage === 'mux') fs.writeFileSync(path.join(args[1], 'timed.ts'), 'ts');
+    if (stage === 'mux') fs.writeFileSync(path.join(args.at(-2), 'timed.ts'), 'ts');
     if (stage === 'convert') fs.writeFileSync(args.at(-1), 'synthetic-media-bytes');
-    if (stage === 'timeline') fs.writeFileSync(path.join(args[1], 'media-timeline.json'), JSON.stringify({ muxStartMs: 0,
+    if (stage === 'timeline') fs.writeFileSync(path.join(args.at(-1), 'media-timeline.json'), JSON.stringify({ muxStartMs: 0,
       streams: { video: { count: mode === 'partial' ? 20 : 1200, firstTimestampMs: 0, lastTimestampMs: mode === 'partial' ? 950 : 59950, lastDurationMs: 50 } } }));
   };
 }

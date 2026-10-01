@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { createServer } = require('./server.cjs');
+const { createServer, resolveDataPaths } = require('./server.cjs');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 
@@ -134,4 +134,16 @@ test('React auth client contract has resident HTTP transitions and keeps rejecte
   assert.equal((await (await fetch(origin + '/api/v1/session')).json()).authenticated, false);
   assert.equal(calls[0].password, 'secret-not-persisted');
   assert.equal(fs.existsSync(path.join(root, 'session.json')), false, 'fixture credentials were never persisted');
+});
+
+test('one data root owns every durable resident path', () => {
+  const root = path.resolve('private-data');
+  assert.deepEqual(resolveDataPaths(root), {
+    root,
+    session: path.join(root, 'auth', 'session.json'),
+    events: path.join(root, 'recordings', 'events'),
+    continuous: path.join(root, 'recordings', 'continuous-jobs'),
+    verification: path.join(root, 'devices', 'verification.json'),
+    agent: path.join(root, 'agent', 'interface.json'),
+  });
 });

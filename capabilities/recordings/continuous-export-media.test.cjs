@@ -3,12 +3,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { ContinuousExportService, OUTPUT } = require('./continuous-export.cjs');
+const moduleRoot = process.env.EUFY_PACKAGE_ROOT || path.resolve(__dirname, '../..');
+const { ContinuousExportService, OUTPUT } = require(path.join(moduleRoot, 'capabilities/recordings/continuous-export.cjs'));
 
 test('configured PyAV/FFmpeg: synthetic complete, gapped and interrupted raw captures retain truthful outcomes',
   { skip: !process.env.EUFY_PYTHON || !process.env.EUFY_FFMPEG }, async t => {
-    fs.mkdirSync(OUTPUT, { recursive: true });
-    const directory = fs.mkdtempSync(path.join(OUTPUT, 'media-test-'));
+    const root = process.env.EUFY_MEDIA_TEST_ROOT || OUTPUT;
+    fs.mkdirSync(root, { recursive: true });
+    const directory = fs.mkdtempSync(path.join(root, 'media-test-'));
     t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
     const run = (executable, args) => {
       const result = spawnSync(executable, args, { windowsHide: true, encoding: 'utf8', timeout: 120000 });
@@ -19,9 +21,9 @@ test('configured PyAV/FFmpeg: synthetic complete, gapped and interrupted raw cap
       '-x264-params', 'bframes=0:keyint=20:repeat-headers=1', '-f', 'h264', path.join(directory, 'synthetic.h264')]);
     run(process.env.EUFY_FFMPEG, ['-hide_banner', '-nostdin', '-v', 'error', '-f', 'lavfi',
       '-i', 'anullsrc=r=48000:cl=mono', '-t', '60', '-c:a', 'aac', '-f', 'adts', path.join(directory, 'synthetic.aac')]);
-    run(process.env.EUFY_PYTHON, [path.join(__dirname, 'fixtures/synthetic-continuous.py'), directory]);
+    run(process.env.EUFY_PYTHON, ['-B', path.join(__dirname, 'fixtures/synthetic-continuous.py'), directory]);
     for (const mode of ['complete', 'gapped', 'interrupted']) {
-      const exporter = new ContinuousExportService({ outputRoot: path.join(directory, mode), createCapture: () => ({
+      const exporter = new ContinuousExportService({ dataRoot: directory, outputRoot: path.join(directory, mode), createCapture: () => ({
         close() {},
         async captureRange(_serial, _begin, _end, destination) {
           fs.mkdirSync(destination);

@@ -50,6 +50,7 @@
   "service.recordings.exportNotFound": "Exported recording not found.",
   "service.localPageRequired": "Please submit from the local page.",
   "service.busy": "Processing. Please wait.",
+  "service.stopping": "The local service is stopping.",
   "service.inputTooLong": "The input is too long.",
   "service.recordings.selectFirst": "Query and select a recording first.",
   "service.recordings.querying": "Reading the HomeBase event recording index…",

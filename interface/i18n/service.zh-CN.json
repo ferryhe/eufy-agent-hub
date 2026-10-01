@@ -50,6 +50,7 @@
   "service.recordings.exportNotFound": "未找到已导出录像。",
   "service.localPageRequired": "请从本地页面提交。",
   "service.busy": "正在处理，请稍候。",
+  "service.stopping": "本地服务正在停止。",
   "service.inputTooLong": "输入过长。",
   "service.recordings.selectFirst": "请先查询并选择录像。",
   "service.recordings.querying": "正在读取 HomeBase 的事件录像索引…",

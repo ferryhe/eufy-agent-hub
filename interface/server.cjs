@@ -11,6 +11,12 @@ const { validateRequest } = require('../api/v1-contract.cjs');
 const { installAgentRoutes } = require('./agent/http.cjs');
 
 const appDist = path.join(__dirname, 'app-dist');
+function resolveDataPaths(root) {
+  root = path.resolve(root);
+  return { root, session: path.join(root, 'auth', 'session.json'),
+    events: path.join(root, 'recordings', 'events'), continuous: path.join(root, 'recordings', 'continuous-jobs'),
+    verification: path.join(root, 'devices', 'verification.json'), agent: path.join(root, 'agent', 'interface.json') };
+}
 const appMime = file => ({ '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' }[path.extname(file)] || 'application/octet-stream');
 function serveApp(req, res, pathname) {
   if (req.method !== 'GET' || !(pathname === '/' || pathname === '/app' || pathname === '/app/' || pathname.startsWith('/app/'))) return false;
@@ -25,8 +31,9 @@ function serveApp(req, res, pathname) {
 function createServer(options = {}) {
   const port = Number(options.port ?? process.env.EUFY_PORT ?? 3187);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('EUFY_PORT 必须是 0–65535 之间的端口。');
+  const data = options.dataRoot || process.env.EUFY_DATA_ROOT ? resolveDataPaths(options.dataRoot || process.env.EUFY_DATA_ROOT) : null;
   const session = options.session || new LocalEufySession(undefined, {
-    sessionPath: options.sessionPath ?? process.env.EUFY_SESSION_PATH ?? path.resolve(__dirname, '../output/auth/session.json'),
+    sessionPath: options.sessionPath ?? process.env.EUFY_SESSION_PATH ?? data?.session ?? path.resolve(__dirname, '../output/auth/session.json'),
   });
   let busy = false;
   const getOrigin = () => `http://127.0.0.1:${server.address()?.port ?? port}`;
@@ -116,23 +123,27 @@ function createServer(options = {}) {
     }
   });
   const recordingRoutes = installRecordingRoutes(server, session, {
-    isBusy: () => busy || v1.isBusy(), getOrigin, recordings: options.recordings, outputRoot: options.outputRoot,
+    isBusy: () => busy || v1.isBusy(), getOrigin, recordings: options.recordings, outputRoot: options.outputRoot ?? data?.events,
   });
   const v1 = installV1Routes(server, session, {
     getOrigin, isBusy: () => busy || recordingRoutes.state.busy || session.state.phase === 'busy',
-    exports: options.exports, createRanges: options.createRanges,
-    capabilityRecordsPath: options.capabilityRecordsPath ?? process.env.EUFY_CAPABILITY_RECORDS_PATH,
+    exports: data ? { dataRoot: data.root, outputRoot: data.continuous, ...options.exports } : options.exports,
+    createRanges: options.createRanges,
+    capabilityRecordsPath: options.capabilityRecordsPath ?? process.env.EUFY_CAPABILITY_RECORDS_PATH ?? data?.verification,
     deviceRepository: options.deviceRepository,
     playback: options.playback,
     live: options.live,
   });
   const isBusy = () => busy || recordingRoutes.state.busy || v1.isBusy();
-  const agentRoutes = installAgentRoutes(server, { getOrigin, ...options.agent });
+  const agentRoutes = installAgentRoutes(server, { getOrigin, ...(data ? { statePath: data.agent } : {}), ...options.agent });
   let shutdown;
-  server.shutdown = () => shutdown ||= agentRoutes.shutdown().then(() => v1.shutdown()).finally(() => {
-    recordingRoutes.recordings.close();
-    session.close?.();
-  });
+  server.shutdown = () => shutdown ||= (async () => {
+    const settled = await Promise.allSettled([agentRoutes.shutdown(), v1.shutdown(), recordingRoutes.shutdown()]);
+    try { await recordingRoutes.recordings.close(); } catch (error) { settled.push({ status: 'rejected', reason: error }); }
+    try { await session.close?.(); } catch (error) { settled.push({ status: 'rejected', reason: error }); }
+    const errors = settled.filter(item => item.status === 'rejected').map(item => item.reason);
+    if (errors.length) throw new AggregateError(errors, 'Resident cleanup failed');
+  })();
   server.once('close', () => { server.shutdown().catch(error => console.error(error)); });
   server.start = callback => {
     server.ready = Promise.resolve(session.restore?.()).then(() => server.listen(port, '127.0.0.1', callback));
@@ -162,4 +173,4 @@ if (require.main === module) {
   process.on('SIGTERM', stop);
 }
 
-module.exports = { createServer };
+module.exports = { createServer, resolveDataPaths };

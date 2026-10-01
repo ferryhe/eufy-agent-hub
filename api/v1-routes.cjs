@@ -313,10 +313,12 @@ function installV1Routes(server, session, options) {
       const liveClosed = live.shutdown(); liveClosed.catch(() => {});
       // Admissions already in flight settle before we stop the resident worker.
       if (pending) await new Promise(resolve => drained.push(resolve));
-      await liveClosed;
-      await playback.shutdown();
-      for (const connection of ranges) connection.close();
-      await exporter?.shutdown();
+      const playbackClosed = playback.shutdown(); playbackClosed.catch(() => {});
+      const exportClosed = exporter?.shutdown(); exportClosed?.catch(() => {});
+      const rangeClosed = [...ranges].map(connection => Promise.resolve().then(() => connection.close()));
+      const settled = await Promise.allSettled([liveClosed, playbackClosed, exportClosed, ...rangeClosed]);
+      const errors = settled.filter(item => item.status === 'rejected').map(item => item.reason);
+      if (errors.length) throw new AggregateError(errors, 'Media cleanup failed');
     },
   };
 }

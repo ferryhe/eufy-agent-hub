@@ -17,6 +17,8 @@
     "app:build": "vite build --config interface/react/vite.config.ts",
     "app:dev": "vite --config interface/react/vite.config.ts",
     "browser:test": "node --test interface/react/browser.cjs"
+    ,"release:win-x64": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release/build-win-x64.ps1"
+    ,"release:test": "node --test scripts/release/*.test.cjs"
   },
   "dependencies": {
     "@assistant-ui/react": "0.15.19",

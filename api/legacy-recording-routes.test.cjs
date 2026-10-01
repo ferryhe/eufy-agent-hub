@@ -185,3 +185,50 @@ test('split download body compares expectedQuery after a concurrent query replac
   assert.equal((await f.post('/recordings/download',{recordId:'7',expectedQuery:b})).status,202);
   assert.deepEqual(f.downloads,['CAMERA002']);
 });
+
+test('shutdown rejects new work and waits for an accepted legacy operation', async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(),'eufy-recording-shutdown-'));
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const recordings = { close() {}, async listWindow(_serial, window) {
+    await gate;
+    return [{record_id:1,start_time:new Date(window.normalized.start),end_time:new Date(window.normalized.end)}];
+  } };
+  const session={authenticated:true,state:{phase:'connected'}};
+  const server=http.createServer((_req,res)=>res.end());
+  const { installRecordingRoutes }=require('./legacy-recording-routes.cjs');
+  const routes=installRecordingRoutes(server,session,{recordings,outputRoot:directory});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(async()=>{if(server.listening)await new Promise(resolve=>server.close(resolve));fs.rmSync(directory,{recursive:true,force:true})});
+  const origin=`http://127.0.0.1:${server.address().port}`;
+  const body={serial:'CAMERA001',day:'2026-08-27',start:'16:30',end:'16:50'};
+  const accepted=await fetch(origin+'/recordings/query',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)});
+  assert.equal(accepted.status,202);
+  let drained=false;
+  const shutdown=routes.shutdown().then(()=>{drained=true});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(drained,false);
+  const rejected=await fetch(origin+'/recordings/query',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)});
+  assert.equal(rejected.status,503);
+  release(); await shutdown;
+  assert.equal(routes.state.busy,false);
+});
+
+test('shutdown rejects a legacy request whose body finishes after draining', async t => {
+  const f=await recordingRouteFixture(t);
+  const body=JSON.stringify({serial:'CAMERA001',day:'2026-08-27',start:'16:30',end:'16:50'});
+  let finish;
+  const pending=new Promise((resolve,reject)=>{
+    const request=http.request(f.origin+'/recordings/query',{method:'POST',headers:{Origin:f.origin,'Content-Type':'application/json','Content-Length':Buffer.byteLength(body)}},response=>{
+      let text='';response.on('data',chunk=>text+=chunk);response.on('end',()=>resolve({status:response.statusCode,value:JSON.parse(text)}));
+    });
+    request.on('error',reject);request.write(body.slice(0,-1));finish=()=>request.end(body.slice(-1));
+  });
+  await new Promise(resolve=>setTimeout(resolve,20));
+  await f.routes.shutdown();
+  finish();
+  const rejected=await pending;
+  assert.equal(rejected.status,503);
+  assert.equal(rejected.value.errorI18n.key,'service.stopping');
+  assert.equal(f.routes.state.busy,false);
+});

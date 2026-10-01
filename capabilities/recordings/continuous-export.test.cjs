@@ -24,13 +24,14 @@ function output(t) {
 function fakeMedia({ short = false, corrupt = false, fail, stages = [] } = {}) {
   return async (_executable, args, { directory, stage, signal }) => {
     stages.push(stage); signal.throwIfAborted();
+    if (['python-runtime','mux','timeline'].includes(stage)) assert.equal(args[0],'-B');
     fs.writeFileSync(path.join(directory, `${stage}.stdout.log`), stage === 'decode'
       ? `frame=${short ? 20 : 1200}\nprogress=end\n` : '');
     fs.writeFileSync(path.join(directory, `${stage}.stderr.log`), '');
     if (stage === fail || (corrupt && stage === 'decode')) throw new Error(`${stage} fixture failure`);
-    if (stage === 'mux') fs.writeFileSync(path.join(args[1], 'timed.ts'), 'ts');
+    if (stage === 'mux') fs.writeFileSync(path.join(args.at(-2), 'timed.ts'), 'ts');
     if (stage === 'convert') fs.writeFileSync(args.at(-1), 'mp4');
-    if (stage === 'timeline') fs.writeFileSync(path.join(args[1], 'media-timeline.json'), JSON.stringify({ muxStartMs: 0,
+    if (stage === 'timeline') fs.writeFileSync(path.join(args.at(-1), 'media-timeline.json'), JSON.stringify({ muxStartMs: 0,
       streams: { video: { count: short ? 20 : 1200, firstTimestampMs: 0, lastTimestampMs: short ? 950 : 59950, lastDurationMs: 50 } } }));
   };
 }
@@ -131,7 +132,7 @@ test('a fully decoded video with a shortened audio stream cannot be complete', a
   const { exporter } = service(t, { capture, execute: async (executable, args, options) => {
     await execute(executable, args, options);
     if (options.stage === 'timeline') {
-      const file = path.join(args[1], 'media-timeline.json');
+      const file = path.join(args.at(-1), 'media-timeline.json');
       const media = JSON.parse(fs.readFileSync(file));
       media.streams.audio = { count: 1, firstTimestampMs: 0, lastTimestampMs: 0, lastDurationMs: 50 };
       fs.writeFileSync(file, JSON.stringify(media));
@@ -261,4 +262,7 @@ test('invalid timezone windows and output roots fail before allocating a job', t
   assert.throws(() => exporter.submit({ ...request(), start: '23:50', end: '00:10' }));
   assert.equal(exporter.jobs.list().length, 0);
   assert.throws(() => new ContinuousExportService({ outputRoot: path.resolve(OUTPUT, '..') }), /below this repository/);
+  const dataRoot = output(t);
+  new ContinuousExportService({ outputRoot: path.join(dataRoot, 'jobs'), dataRoot });
+  assert.throws(() => new ContinuousExportService({ outputRoot: path.resolve(dataRoot, '..'), dataRoot }), /below the configured data root/);
 });
